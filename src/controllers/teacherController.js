@@ -1,0 +1,503 @@
+import User from '../models/User.js';
+import Class from '../models/Class.js';
+import ClassSubject from '../models/ClassSubject.js';
+import Attendance from '../models/Attendance.js';
+import Mark from '../models/Mark.js';
+import Exam from '../models/Exam.js';
+import Schedule from '../models/Schedule.js';
+import ExamSession from '../models/ExamSession.js';
+
+// --- View Assigned Classes ---
+export const getAssignedClasses = async (req, res) => {
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const assignments = await ClassSubject.find({
+      teacher: req.user._id,
+      school: schoolId,
+    }).populate('class');
+
+    // Get unique classes from assignments
+    const classesMap = new Map();
+    assignments.forEach(a => {
+      if (a.class && !classesMap.has(a.class._id.toString())) {
+        classesMap.set(a.class._id.toString(), a.class);
+      }
+    });
+
+    const allAssignedClasses = Array.from(classesMap.values());
+    res.json(allAssignedClasses);
+  } catch (error) {
+    res.status(500).json({ 
+      message: error.message,
+      userMessage: 'Failed to fetch assigned classes.'
+    });
+  }
+};
+
+// --- Take Attendance ---
+export const takeAttendance = async (req, res) => {
+  const { classId, subjectId, studentsAttendance, date } = req.body; 
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // 1. Check if attendance already exists for this class, subject, and day
+    const existingAttendance = await Attendance.findOne({
+      class: classId,
+      subject: subjectId,
+      school: schoolId,
+      date: {
+        $gte: today,
+        $lte: new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1)
+      }
+    }).sort({ createdAt: 1 }); // Get the earliest record
+
+    if (existingAttendance) {
+      const now = new Date();
+      const firstMarkedAt = new Date(existingAttendance.createdAt);
+      const minutesSinceFirstMarked = (now - firstMarkedAt) / (1000 * 60);
+
+      // If it's been more than 20 minutes, block re-submission until next day
+      if (minutesSinceFirstMarked > 20) {
+        return res.status(403).json({ 
+          message: 'Attendance locked.',
+          userMessage: 'Attendance for this subject was marked more than 20 minutes ago and is now locked until tomorrow.'
+        });
+      }
+      
+      // If within 20 minutes, we'll replace the existing records for this day/subject/class
+      await Attendance.deleteMany({
+        class: classId,
+        subject: subjectId,
+        school: schoolId,
+        date: {
+          $gte: today,
+          $lte: new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1)
+        }
+      });
+    }
+
+    // 2. Validate subject assignment
+    const classSubjectAssignment = await ClassSubject.findOne({
+      subject: subjectId,
+      class: classId,
+      school: schoolId,
+    });
+    
+    if (!classSubjectAssignment) {
+      return res.status(400).json({ 
+        message: 'Subject is not assigned to this class',
+        userMessage: 'This subject is not assigned to the selected class.'
+      });
+    }
+
+    // 3. Validate teacher assignment
+    if (req.user.role === 'teacher') {
+      const isAssigned = await ClassSubject.findOne({
+        subject: subjectId,
+        class: classId,
+        teacher: req.user._id,
+        school: schoolId,
+      });
+      if (!isAssigned) {
+        return res.status(403).json({ 
+          message: 'Not assigned to this subject',
+          userMessage: 'You are not assigned to teach this subject in this class.'
+        });
+      }
+    }
+
+    const attendanceRecords = studentsAttendance.map(item => ({
+      user: item.studentId,
+      date: date || new Date(),
+      status: item.status,
+      class: classId,
+      subject: subjectId,
+      school: schoolId,
+      markedBy: req.user._id,
+    }));
+
+    await Attendance.insertMany(attendanceRecords);
+    res.status(201).json({ 
+      message: 'Attendance recorded successfully',
+      userMessage: 'Attendance recorded successfully.'
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      message: error.message,
+      userMessage: 'Something went wrong. Please try again.'
+    });
+  }
+};
+
+// --- View Class Attendance ---
+export const getClassAttendance = async (req, res) => {
+  const { classId, subjectId, date } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const query = {
+      class: classId,
+      date: {
+        $gte: new Date(new Date(date).setHours(0, 0, 0)),
+        $lte: new Date(new Date(date).setHours(23, 59, 59)),
+      },
+      school: schoolId,
+    };
+
+    if (subjectId) {
+      query.subject = subjectId;
+    }
+
+    const attendance = await Attendance.find(query)
+      .populate('user', 'name profileImage')
+      .populate('subject', 'name');
+    res.json(attendance);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Submit Marks ---
+export const submitMarks = async (req, res) => {
+  const { subjectId, classId, examType, studentMarks } = req.body; 
+  const schoolId = req.user.school?._id || req.user.school;
+  // examType: 'monthly1', 'midterm', 'monthly2', 'final'
+  // studentMarks: [{ studentId, score, remarks }]
+  try {
+    // Validate examType
+    const validExams = ['monthly1', 'midterm', 'monthly2', 'final'];
+    if (!validExams.includes(examType)) {
+      return res.status(400).json({ message: 'Invalid exam type' });
+    }
+
+    // Validate if teacher is assigned to the subject
+    let actualSubjectId = subjectId;
+    if (req.user.role === 'teacher') {
+      const isAssigned = await ClassSubject.findOne({
+        $or: [
+          { subject: subjectId },
+          { _id: subjectId }
+        ],
+        teacher: req.user._id,
+        class: classId,
+        school: schoolId,
+      });
+      if (!isAssigned) {
+        console.log(`Teacher ${req.user._id} assignment check failed: Subject=${subjectId}, Class=${classId}`);
+        return res.status(403).json({ 
+          message: 'You are not assigned to this subject in this class',
+          userMessage: 'Security Error: You are not authorized to submit marks for this class and subject.'
+        });
+      }
+      // Ensure we use the actual Subject ID for saving marks, not the Assignment ID
+      actualSubjectId = isAssigned.subject;
+    }
+
+    const termToEnum = {
+      'monthly1': 'Monthly1',
+      'midterm': 'Midterm',
+      'monthly2': 'Monthly2',
+      'final': 'Final'
+    };
+    
+    // Validation: Enforce that an admin has explicitly created and published the exam
+    // Check for legacy Exam record or modern ExamSession
+    let examRecord = await Exam.findOne({
+      subject: actualSubjectId,
+      class: classId,
+      term: termToEnum[examType],
+      school: schoolId
+    });
+
+    if (!examRecord) {
+      // Check for modern ExamSession
+      const termToSessionName = {
+        'monthly1': 'Monthly 1',
+        'midterm': 'Midterm',
+        'monthly2': 'Monthly 2',
+        'final': 'Final'
+      };
+      
+      const session = await ExamSession.findOne({
+        name: termToSessionName[examType],
+        classes: classId,
+        subjects: actualSubjectId,
+        school: schoolId
+      });
+
+      if (!session) {
+        return res.status(403).json({ 
+          message: 'No registered exam found for this subject and term. The school admin must register the exam first.',
+          userMessage: 'You cannot submit marks because the school admin has not registered this exam yet.'
+        });
+      }
+      
+      // If session exists, we treat it as valid
+      examRecord = { status: 'Published' }; 
+    }
+
+    if (examRecord.status !== 'Published' && examRecord.status !== 'Scheduled' && examRecord.status !== 'Active' && examRecord.status !== 'Completed') {
+      return res.status(403).json({ 
+        message: 'Exam is registered but not yet ready for grading.',
+        userMessage: 'This exam is not yet open for grading.'
+      });
+    }
+
+    // Update or insert marks for each student
+    for (const item of studentMarks) {
+      await Mark.findOneAndUpdate(
+        { student: item.studentId, subject: actualSubjectId, class: classId, school: schoolId },
+        { 
+          $set: {
+            [examType]: item.score || 0,
+            remarks: item.remarks || '',
+            gradedBy: req.user._id,
+            school: schoolId,
+            student: item.studentId,
+            subject: actualSubjectId,
+            class: classId
+          }
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    res.status(201).json({ message: `Marks for ${examType} submitted/updated successfully` });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// --- Get existing marks for a class + subject (for pre-filling marks entry) ---
+export const getClassSubjectMarks = async (req, res) => {
+  const { classId, subjectId } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const marks = await Mark.find({
+      class: classId,
+      subject: subjectId,
+      school: schoolId
+    }).select('student monthly1 midterm monthly2 final remarks');
+    // Return as a map: { studentId: { monthly1, midterm, monthly2, final, remarks } }
+    const marksMap = {};
+    marks.forEach(m => {
+      marksMap[m.student.toString()] = {
+        monthly1: m.monthly1 || 0,
+        midterm: m.midterm || 0,
+        monthly2: m.monthly2 || 0,
+        final: m.final || 0,
+        remarks: m.remarks || ''
+      };
+    });
+    res.json(marksMap);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- View Students List ---
+export const getStudentsInClass = async (req, res) => {
+  const { classId } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const students = await User.find({ role: 'student', class: classId, school: schoolId });
+    res.json(students);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- View Schedule ---
+export const getTeacherSchedule = async (req, res) => {
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const schedules = await Schedule.find({ teacher: req.user._id, school: schoolId })
+      .populate('class', 'name section')
+      .populate('subject', 'name code')
+      .sort({ day: 1, startTime: 1 });
+
+    res.json(schedules);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- View Taught Subjects ---
+export const getTaughtSubjects = async (req, res) => {
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const rows = await ClassSubject.find({
+      teacher: req.user._id,
+      school: schoolId,
+    }).populate('subject').populate('class');
+
+    const subjects = rows
+      .filter((r) => r.subject && r.class)
+      .map((r) => ({
+        _id: r._id, // USE ASSIGNMENT ID for unique identity per class/subject
+        subjectId: r.subject._id,
+        name: r.subject.name,
+        code: r.subject.code,
+        class: r.class,
+      }));
+
+    res.json(subjects);
+  } catch (error) {
+    res.status(500).json({ 
+      message: error.message,
+      userMessage: 'Failed to fetch taught subjects.'
+    });
+  }
+};
+
+// --- View Exams for their subjects ---
+export const getExams = async (req, res) => {
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const assignments = await ClassSubject.find({
+      teacher: req.user._id,
+      school: schoolId,
+    });
+    
+    // Get unique subject-class pairs the teacher is assigned to
+    const teacherAssignments = assignments.map(a => ({
+      subjectId: String(a.subject),
+      classId: String(a.class)
+    }));
+
+    if (teacherAssignments.length === 0) {
+      return res.json([]);
+    }
+
+    // 1. Get legacy individual exams
+    const legacyExams = await Exam.find({ 
+      school: schoolId,
+      status: { $in: ['Published', 'Scheduled', 'Active', 'Completed'] } 
+    }).populate('subject').populate('class');
+
+    // 2. Get modern ExamSessions and convert them to virtual Exam objects
+    const sessions = await ExamSession.find({
+      school: schoolId,
+      status: { $in: ['Published', 'Scheduled', 'Active', 'Completed'] }
+    }).populate('subjects').populate('classes');
+
+    const sessionExams = [];
+    sessions.forEach(session => {
+      // Map session name to term format
+      const termMap = {
+        'Monthly 1': 'Monthly1',
+        'Midterm': 'Midterm',
+        'Monthly 2': 'Monthly2',
+        'Final': 'Final'
+      };
+      const term = termMap[session.name] || session.name;
+
+      session.classes.forEach(cls => {
+        session.subjects.forEach(sub => {
+          sessionExams.push({
+            _id: `${session._id}-${cls._id}-${sub._id}`,
+            name: session.name,
+            term: term,
+            date: session.date,
+            class: cls,
+            subject: sub,
+            maxMarks: session.maxMarks,
+            status: 'Published', // Treat active sessions as published for teachers
+            isSession: true,
+            sessionId: session._id
+          });
+        });
+      });
+    });
+
+    // Combine both
+    const allExams = [...legacyExams, ...sessionExams];
+
+    // Filter exams to only show those for subjects/classes assigned to this teacher
+    const filteredExams = allExams.filter(exam => {
+      const examSubId = String(exam.subject?._id || exam.subject);
+      const examClassId = String(exam.class?._id || exam.class);
+      
+      return teacherAssignments.some(ta => 
+        ta.subjectId === examSubId && 
+        ta.classId === examClassId
+      );
+    });
+
+    res.json(filteredExams);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Mark Exam as Present ---
+export const markExamAsPresent = async (req, res) => {
+  const { examId } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    const exam = await Exam.findOne({ _id: examId, school: schoolId });
+    if (!exam) {
+      return res.status(404).json({ message: 'Exam not found' });
+    }
+
+    // Validate if teacher is assigned to the subject of this exam
+    const subject = await ClassSubject.findOne({
+      subject: exam.subject,
+      class: exam.class,
+      teacher: req.user._id,
+      school: schoolId,
+    });
+    if (!subject) {
+      return res.status(403).json({ message: 'You are not authorized to manage this exam' });
+    }
+
+    exam.status = 'Present';
+    await exam.save();
+    res.json({ message: 'Exam marked as Present', exam });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Request an Exam ---
+export const requestExam = async (req, res) => {
+  const { name, term, date, classId, subjectId, maxMarks } = req.body;
+  const schoolId = req.user.school?._id || req.user.school;
+  try {
+    // Validate if teacher is assigned to this class and subject
+    const isAssigned = await ClassSubject.findOne({
+      class: classId,
+      subject: subjectId,
+      teacher: req.user._id,
+      school: schoolId
+    });
+
+    if (!isAssigned) {
+      return res.status(403).json({ 
+        message: 'Access denied', 
+        userMessage: 'You can only request exams for subjects and classes you are assigned to.' 
+      });
+    }
+
+    const exam = await Exam.create({
+      name,
+      term,
+      date,
+      class: classId,
+      subject: subjectId,
+      maxMarks: maxMarks || 100,
+      status: 'Pending',
+      requestedBy: req.user._id,
+      school: schoolId
+    });
+
+    res.status(201).json({
+      message: 'Exam request submitted successfully',
+      userMessage: 'Your exam request has been submitted for admin approval.',
+      exam
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

@@ -1,0 +1,65 @@
+{
+  "name": "school-management-backend",
+  "version": "1.0.0",
+  "description": "Complete School Management System Backend",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "jest",
+    "build": "echo 'No build step required for Node.js'",
+    "seed": "node scripts/seedDatabase.js",
+    "list-schools": "node scripts/listSchoolsTenants.js"
+  },
+  "keywords": [
+    "school",
+    "management",
+    "education",
+    "admin",
+    "student",
+    "teacher"
+  ],
+  "author": "School Management System",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.14.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-async-handler": "^1.2.0",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "hpp": "^0.2.3",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.29.4",
+    "mongoose": "^9.4.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "multer-storage-cloudinary": "^4.0.0",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^6.9.7",
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.32.6",
+    "uuid": "^9.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}
