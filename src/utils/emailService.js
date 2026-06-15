@@ -14,6 +14,45 @@ import {
 let resend;
 let resendInitialized = false;
 
+// Minimal Headers polyfill for Node.js environments that lack global Headers
+if (typeof globalThis.Headers === 'undefined') {
+  class SimpleHeaders {
+    constructor(init = {}) {
+      this.map = new Map();
+      if (init instanceof SimpleHeaders) {
+        for (const [k, v] of init.map) this.map.set(k, v);
+      } else if (typeof init === 'object' && init) {
+        for (const [k, v] of Object.entries(init)) this.map.set(String(k).toLowerCase(), String(v));
+      }
+    }
+    append(key, value) {
+      const k = String(key).toLowerCase();
+      const existing = this.map.get(k);
+      this.map.set(k, existing ? `${existing}, ${value}` : String(value));
+    }
+    set(key, value) {
+      this.map.set(String(key).toLowerCase(), String(value));
+    }
+    get(key) {
+      return this.map.get(String(key).toLowerCase()) || null;
+    }
+    has(key) {
+      return this.map.has(String(key).toLowerCase());
+    }
+    delete(key) {
+      return this.map.delete(String(key).toLowerCase());
+    }
+    forEach(cb) {
+      for (const [k, v] of this.map) cb(v, k, this);
+    }
+    entries() {
+      return this.map.entries();
+    }
+  }
+
+  globalThis.Headers = SimpleHeaders;
+}
+
 const initResend = () => {
   if (resendInitialized) return;
   
