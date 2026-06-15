@@ -6,17 +6,16 @@ export const initSocket = (server) => {
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        // Allow all origins in dev, and specific origins in prod
+        // Allow localhost in development; restrict to known production origins in prod
         const isDev = process.env.NODE_ENV === 'development';
-        const isAllowed = isDev || 
-          origin === 'https://dugsihub-lilac.vercel.app' || 
-          (origin && origin.startsWith('http://localhost:')) ||
-          (origin && origin.includes('ngrok-free.dev'));
-        
-        if (isAllowed || !origin) {
-          return callback(null, true);
-        }
-        
+        const allowedProdOrigins = [
+          'https://dugsihub-lilac.vercel.app',
+          'https://schoolmangementbackend-production.up.railway.app'
+        ];
+
+        const isAllowed = isDev || (!origin) || allowedProdOrigins.includes(origin) || (origin && origin.startsWith('http://localhost:'));
+
+        if (isAllowed) return callback(null, true);
         console.log(`[Socket] Rejecting CORS for origin: ${origin}`);
         return callback(new Error('Not allowed by CORS'));
       },

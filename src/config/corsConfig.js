@@ -16,12 +16,11 @@ export const parseAllowedOrigins = () => {
       );
       return null;
     }
-    return [
-      /^(https?:\/\/)(residence-rarity-itunes\.ngrok-free\.dev|localhost|127\.0\.0\.1)(:\d+)?$/i,
-      /\.vercel\.app$/i,
-      /dugsihub-lilac\.vercel\.app$/i,
-      /\.ngrok-free\.dev$/i
-    ];
+      return [
+        /^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?$/i,
+        /\.vercel\.app$/i,
+        /dugsihub-lilac\.vercel\.app$/i
+      ];
   }
 
   return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
@@ -56,10 +55,7 @@ export const originMatcher = (allowed) => (origin, callback) => {
 
   // 3. In development, be more permissive with common dev domains if not explicitly matched
   if (process.env.NODE_ENV === 'development') {
-    if (origin.startsWith('http://localhost') || 
-        origin.startsWith('http://127.0.0.1') ||
-        origin.includes('ngrok-free.dev') ||
-        origin.includes('vercel.app')) {
+      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || origin.includes('vercel.app')) {
       return callback(null, true);
     }
   }

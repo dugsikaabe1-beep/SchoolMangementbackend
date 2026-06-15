@@ -750,7 +750,7 @@ export const getTenantInfo = async (req, res) => {
     });
   }
 
-  // 2. If no school is detected on req, we are on the Platform Root (e.g. localhost or root ngrok URL)
+  // 2. If no school is detected on req, we are on the Platform Root (e.g. localhost or root host)
   if (!req.school) {
     // We allow access to the platform home/login even if no tenant is found
     // This enables the "Shared Login" experience.
@@ -1352,7 +1352,7 @@ export const resetPassword = async (req, res, next) => {
       const userSchoolId = user.school?._id || user.school;
       const currentSchoolId = req.schoolId;
 
-      // In local dev/ngrok, we might not have a host-based tenant. 
+      // In local development, we might not have a host-based tenant. 
       // If the user has a school and we are in a hostless context, we verify 
       // they aren't trying to reset someone else's password in a cross-tenant way.
       if (currentSchoolId && userSchoolId) {

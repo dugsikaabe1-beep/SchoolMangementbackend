@@ -53,10 +53,9 @@ export const verifyRefreshToken = (token) =>
 export const setTokenCookies = (res, refreshToken) => {
   const maxAge = 7 * 24 * 60 * 60 * 1000;
   
-  // When using ngrok or production, we need SameSite=None and Secure=True for cross-origin cookies
+  // Use secure cookies in production (SameSite=None, Secure=true)
   const isProd = process.env.NODE_ENV === 'production';
-  const isNgrok = process.env.ROOT_DOMAIN?.includes('ngrok-free.dev');
-  const useSecure = isProd || isNgrok;
+  const useSecure = isProd;
 
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
@@ -69,8 +68,7 @@ export const setTokenCookies = (res, refreshToken) => {
 
 export const clearRefreshCookie = (res) => {
   const isProd = process.env.NODE_ENV === 'production';
-  const isNgrok = process.env.ROOT_DOMAIN?.includes('ngrok-free.dev');
-  const useSecure = isProd || isNgrok;
+  const useSecure = isProd;
 
   res.clearCookie('refreshToken', {
     httpOnly: true,

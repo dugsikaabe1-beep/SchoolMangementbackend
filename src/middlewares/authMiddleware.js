@@ -180,7 +180,7 @@ export const protect = async (req, res, next) => {
           // Allow proceeding to setup routes
         } else if (isAdmin && allowHostlessTenant) {
           // Senior Fix: Allow school admins to operate without a host-based subdomain 
-          // when in development/ngrok mode. This enables root-domain login.
+          // when in development mode. This enables root-domain login.
           if (user.school?._id) {
             req.schoolId = user.school._id;
             req.tenantId = user.school.subdomain;

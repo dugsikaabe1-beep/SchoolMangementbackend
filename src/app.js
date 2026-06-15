@@ -64,7 +64,6 @@ const corsOptions = {
     'x-academic-year-id',
     'X-Academic-Year-ID',
     'X-Requested-With',
-    'ngrok-skip-browser-warning',
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   optionsSuccessStatus: 200,
@@ -72,7 +71,7 @@ const corsOptions = {
 
 // 1.1 Handle CORS and Preflight FIRST
 if (process.env.NODE_ENV === 'development') {
-  // Manual CORS — always works, no package quirks with ngrok
+  // Manual CORS — always works for local development
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     if (origin) {
@@ -83,7 +82,7 @@ if (process.env.NODE_ENV === 'development') {
     res.setHeader(
       'Access-Control-Allow-Headers',
       req.headers['access-control-request-headers'] ||
-        'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with, ngrok-skip-browser-warning'
+        'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with'
     );
     res.setHeader('Access-Control-Max-Age', '86400');
     if (req.method === 'OPTIONS') {
@@ -95,30 +94,27 @@ if (process.env.NODE_ENV === 'development') {
   app.use(cors(corsOptions));
 }
 
-// Explicitly handle preflight and ngrok stability
+// Explicitly handle preflight
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  
-  // Define allowed patterns for manual header setting (backup to cors middleware)
-  const isAllowedOrigin = 
-    origin === 'https://dugsihub-lilac.vercel.app' || 
-    (origin && origin.startsWith('http://localhost:')) ||
-    (origin && origin.includes('ngrok-free.dev'));
+
+  // Allow known production origin or localhost during development
+  const isAllowedOrigin =
+    origin === 'https://dugsimaamul.vercel.app' ||
+    origin === 'https://schoolmangementbackend-production.up.railway.app' ||
+    (process.env.NODE_ENV === 'development' && origin && origin.startsWith('http://localhost:'));
 
   if (isAllowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with, ngrok-skip-browser-warning');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with');
   }
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Standard ngrok warning skip
-  res.setHeader('ngrok-skip-browser-warning', 'true');
   next();
 });
 
@@ -130,8 +126,7 @@ app.use((req, res, next) => {
       console.log(`[CORS-Debug] ${req.method} ${req.originalUrl} | Origin: ${origin}`);
     }
   }
-  // Standard ngrok warning skip
-  res.setHeader('ngrok-skip-browser-warning', 'true');
+  // No dev-only headers set in production
   next();
 });
 
@@ -183,7 +178,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:", "res.cloudinary.com"],
-      connectSrc: ["'self'", "https://api.cloudinary.com", "https://residence-rarity-itunes.ngrok-free.dev"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "https://schoolmangementbackend-production.up.railway.app"],
     },
   },
 }));
@@ -322,7 +317,7 @@ app.use('/api/enterprise', enterpriseRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 
-// Mobile ngrok/dev compatibility: some Expo builds use an API_URL without /api.
+// Mobile dev compatibility: some Expo builds use an API_URL without /api.
 app.use('/mobile', mobileRoutes);
 
 // --- 4. ERROR HANDLING ---

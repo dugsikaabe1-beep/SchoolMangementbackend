@@ -41,7 +41,6 @@ const isBareLocalDevHost = (host) => {
   if (!host) return false;
   return (
     host === 'localhost' ||
-    host.includes('ngrok-free.dev') ||
     host.endsWith('.vercel.app') ||
     host.startsWith('127.0.0.1') ||
     /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(host)
@@ -162,7 +161,7 @@ export const detectTenant = async (req, res, next) => {
     }
   }
 
-  // Bare localhost / 127.0.0.1 / IP / ngrok: skip school lookup entirely
+  // Bare localhost / 127.0.0.1 / IP: skip school lookup entirely
   if (isBareLocalDevHost(host)) {
     console.log(`[Tenant] Bare local dev host detected, skipping school isolation.`);
     req.isSuperAdminRoute = false;
