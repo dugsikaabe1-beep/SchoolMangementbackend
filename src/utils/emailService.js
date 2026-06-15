@@ -314,22 +314,52 @@ const sendEmail = async (options) => {
   console.log(`[EmailService] Sending email to ${to} via SMTP...`);
   const emailLog = await createEmailLog({ to, from, replyTo, subject: options.subject, type, provider: 'smtp', metadata: options.metadata });
   
+  // Helper: send via transporter with retry on transient errors
+  const sendWithRetry = async (mailOptions, emailLog, maxAttempts = 3, baseDelay = 1000) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`[EmailService] SMTP send attempt ${attempt} for ${to}`);
+        const result = await transporter.sendMail(mailOptions);
+        await updateEmailLog(emailLog, {
+          status: 'sent',
+          messageId: result.messageId,
+          sentAt: new Date(),
+          response: result
+        });
+        return result;
+      } catch (err) {
+        console.error(`[EmailService] SMTP attempt ${attempt} failed: ${err.message}`);
+        await updateEmailLog(emailLog, {
+          status: 'retrying',
+          lastError: err.message,
+          lastAttemptAt: new Date()
+        });
+
+        const transientPattern = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|ENOTFOUND/i;
+        const isTransient = transientPattern.test(err.code || err.message || '');
+
+        if (attempt === maxAttempts || !isTransient) {
+          await updateEmailLog(emailLog, {
+            status: 'failed',
+            error: err.message
+          });
+          throw err;
+        }
+
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`[EmailService] Waiting ${delay}ms before retrying SMTP (attempt ${attempt + 1})...`);
+        await new Promise((res) => setTimeout(res, delay));
+      }
+    }
+    throw new Error('SMTP send failed after retries');
+  };
+
   try {
-    const result = await transporter.sendMail(mailOptions);
-    await updateEmailLog(emailLog, {
-      status: 'sent',
-      messageId: result.messageId,
-      sentAt: new Date(),
-      response: result
-    });
+    const result = await sendWithRetry(mailOptions, emailLog);
     console.log(`[EmailService] ✅ Email Sent Successfully via SMTP to ${to}`);
     console.log(`[EmailService] Message ID: ${result.messageId}`);
     return { success: true, messageId: result.messageId };
   } catch (error) {
-    await updateEmailLog(emailLog, {
-      status: 'failed',
-      error: error.message
-    });
     console.error(`[EmailService] ❌ Email Failed to send to ${to}`);
     console.error(`[EmailService] Error message: ${error.message}`);
     console.error(`[EmailService] Full error stack: ${error.stack}`);
