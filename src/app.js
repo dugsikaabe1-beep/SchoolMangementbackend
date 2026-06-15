@@ -100,7 +100,7 @@ app.use((req, res, next) => {
 
   // Allow known production origin or localhost during development
   const isAllowedOrigin =
-    origin === 'https://dugsimaamul.vercel.app' ||
+    origin === 'https://dugsikabe.vercel.app' ||
     origin === 'https://schoolmangementbackend-production.up.railway.app' ||
     (process.env.NODE_ENV === 'development' && origin && origin.startsWith('http://localhost:'));
 
@@ -197,7 +197,7 @@ const apiLimiter = rateLimit({
   skip: (req) => 
     req.originalUrl?.startsWith('/api/health') || 
     req.method === 'OPTIONS' ||
-    req.headers.origin === 'https://dugsihub-lilac.vercel.app',
+    req.headers.origin === 'https://dugsikabe.vercel.app',
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'
