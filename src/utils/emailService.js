@@ -196,17 +196,28 @@ const initEmailTransporter = async () => {
     debug: process.env.NODE_ENV === 'development', // Debug in dev
   });
 
-  // Verify transporter connection
-  try {
-    console.log('[EmailService] Verifying SMTP connection...');
-    await transporter.verify();
-    console.log('[EmailService] ✅ SMTP Connected Successfully');
-    transporterVerified = true;
-  } catch (error) {
-    console.error('[EmailService] ❌ SMTP Connection Failed:', error.message);
-    console.error('[EmailService] Full error stack:', error.stack);
-    transporterVerified = false;
-    throw error;
+  // Verify transporter connection with retries for transient network/timeouts
+  const maxAttempts = Number(process.env.EMAIL_VERIFY_ATTEMPTS || 3);
+  const baseDelay = Number(process.env.EMAIL_VERIFY_BASE_DELAY_MS || 1000);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`[EmailService] Verifying SMTP connection (attempt ${attempt}/${maxAttempts})...`);
+      await transporter.verify();
+      console.log('[EmailService] ✅ SMTP Connected Successfully');
+      transporterVerified = true;
+      return;
+    } catch (error) {
+      console.error(`[EmailService] SMTP verify attempt ${attempt} failed: ${error.message}`);
+      if (attempt === maxAttempts) {
+        console.error('[EmailService] ❌ SMTP Connection Failed after retries:', error.stack);
+        transporterVerified = false;
+        throw new Error(`Failed to initialize email transporter: ${error.message}`);
+      }
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.log(`[EmailService] Waiting ${delay}ms before next verify attempt...`);
+      await new Promise((res) => setTimeout(res, delay));
+    }
   }
 };
 
