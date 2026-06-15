@@ -305,7 +305,10 @@ const sendEmail = async (options) => {
  * Send Verification Email
  */
 export const sendVerificationEmail = async (user, token) => {
-  const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
+  // Prefer an explicit public frontend URL for emails (set in production).
+  // Falls back to CLIENT_URL for backwards compatibility.
+  const frontendBase = process.env.PUBLIC_FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  const verificationUrl = `${frontendBase.replace(/\/$/, '')}/verify-email?token=${token}`;
   const trimmedUserName = user.name ? user.name.trim() : 'User';
   const html = getVerificationEmailTemplate(trimmedUserName, verificationUrl);
   // Plain text version for spam filter compatibility
