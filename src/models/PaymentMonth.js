@@ -22,8 +22,14 @@ const paymentMonthSchema = new mongoose.Schema(
       default: 'ALL',
     },
     class: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', default: null },
-    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
+    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', index: true },
+    academicYear: { type: String, required: true, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     // Quick stats (updated when payments are marked)
     totalStudents: { type: Number, default: 0 },
     paidCount:     { type: Number, default: 0 },
@@ -32,8 +38,8 @@ const paymentMonthSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Unique constraint: only one config per month+year per school (per class if CLASS scope)
-paymentMonthSchema.index({ month: 1, year: 1, school: 1, class: 1 }, { unique: true });
+// Unique constraint: only one config per month+year per school per branch (per class if CLASS scope)
+paymentMonthSchema.index({ month: 1, year: 1, school: 1, branch: 1, class: 1 }, { unique: true });
 
 // Auto-set monthLabel before save
 paymentMonthSchema.pre('save', function () {

@@ -11,7 +11,85 @@ import Payment from '../models/Payment.js';
 import PaymentMonth from '../models/PaymentMonth.js';
 import MonthlyPayment from '../models/MonthlyPayment.js';
 import Schedule from '../models/Schedule.js';
+import Branch from '../models/Branch.js';
+import SchoolFeatureOverride from '../models/SchoolFeatureOverride.js';
+import { getCurrentAcademicYear } from '../utils/academicUtils.js';
+import { getEnabledFeaturesForSchool } from '../utils/featureAccess.js';
 import { generateCustomId } from '../utils/schoolUtils.js';
+import { logFinanceAction } from '../utils/financeAuditLogger.js';
+import { broadcastNotification, sendNotification } from '../utils/notificationService.js';
+import { restoreRecord } from '../utils/queryUtils.js';
+import { generatePdf } from '../utils/pdfGenerator.js';
+import Certificate from '../models/Certificate.js';
+import IDCardDesign from '../models/IDCardDesign.js';
+import Admission from '../models/Admission.js';
+import CalendarEvent from '../models/CalendarEvent.js';
+import AuditLog from '../models/AuditLog.js';
+import { logActivity } from '../utils/activityLogger.js';
+import { logAction } from '../utils/auditLogger.js';
+import PromotionHistory from '../models/PromotionHistory.js';
+import FeeStructure from '../models/FeeStructure.js';
+import Discount from '../models/Discount.js';
+import DiscountAssignment from '../models/DiscountAssignment.js';
+import ApprovalRequest from '../models/ApprovalRequest.js';
+import Asset from '../models/Asset.js';
+import LibraryBook from '../models/LibraryBook.js';
+import LibraryIssue from '../models/LibraryIssue.js';
+import TransportRoute from '../models/TransportRoute.js';
+import TransportVehicle from '../models/TransportVehicle.js';
+import Hostel from '../models/Hostel.js';
+import HostelRoom from '../models/HostelRoom.js';
+import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
+import path from 'path';
+import fs from 'fs/promises';
+import {
+  calculateDiscountedAmount,
+  calculateStudentMonthlyFee,
+  getActiveDiscountAssignmentsForStudent,
+  resolveDiscountEndDate,
+} from '../utils/discountUtils.js';
+
+const MONTH_NAMES = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+];
+
+// Helper function to resolve branch ID
+const resolveBranchId = async (req) => {
+  // If explicitly set to null (ALL_BRANCHES), return null
+  if (req.branchId === null) {
+    return null;
+  }
+  
+  let branchId = req.branchId || req.user?.branch;
+  
+  if (!branchId) {
+    const schoolId = req.user.school;
+    let branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+    }).sort({ createdAt: 1 });
+
+    if (!branch) {
+      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
+    }
+
+    if (!branch) {
+      branch = await Branch.create({
+        tenant: schoolId,
+        name: 'Main Branch',
+        code: 'MAIN',
+        status: 'active',
+        createdBy: req.user._id
+      });
+    }
+    branchId = branch._id;
+  }
+  return branchId;
+};
 
 // Helper function to calculate grade
 const calculateGrade = (avg) => {
@@ -22,6 +100,202 @@ const calculateGrade = (avg) => {
   if (avg >= 50) return 'C';
   if (avg >= 40) return 'D';
   return 'F';
+};
+
+// --- Certificate Generator ---
+export const generateCertificate = async (req, res) => {
+  const { studentId, type, title, achievementName } = req.body;
+  const schoolId = req.user.school;
+  try {
+    const student = await User.findById(studentId).populate('school');
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    const school = await School.findById(schoolId);
+    
+    const certificate = await Certificate.create({
+      school: schoolId,
+      branch: req.branchId,
+      student: studentId,
+      academicYear: req.academicYearId,
+      type,
+      title,
+      verificationNumber: `CERT-${uuidv4().split('-')[0].toUpperCase()}`,
+      content: { achievementName },
+      issuedBy: req.user._id
+    });
+
+    const pdfBuffer = await generatePdf('certificate', {
+      schoolLogo: school.logo?.url,
+      schoolName: school.name,
+      schoolAddress: school.address,
+      certificateTitle: title,
+      studentName: student.name,
+      achievementName,
+      academicYear: req.academicYearName,
+      verificationNumber: certificate.verificationNumber,
+      principalName: school.principalName || 'Principal'
+    });
+
+    res.contentType('application/pdf');
+    res.send(pdfBuffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Online Admission System ---
+export const getAdmissions = async (req, res) => {
+  try {
+    const admissions = await Admission.find({ school: req.user.school }).populate('class');
+    res.json(admissions);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateAdmissionStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status, reviewNotes } = req.body;
+  try {
+    const admission = await Admission.findByIdAndUpdate(
+      id,
+      { status, reviewNotes, reviewedBy: req.user._id },
+      { new: true }
+    );
+
+    if (status === 'approved') {
+      // Create student user logic here
+      const studentData = {
+        name: admission.studentName,
+        email: admission.email,
+        phone: admission.phone,
+        role: 'student',
+        school: admission.school,
+        branch: admission.branch,
+        class: admission.class,
+        parentName: admission.parentName,
+        parentPhone: admission.parentPhone,
+        status: 'active'
+      };
+      await User.create(studentData);
+    }
+
+    res.json(admission);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Student Promotion System ---
+export const promoteStudents = async (req, res) => {
+  const { studentIds, fromClassId, toClassId, promotionType } = req.body;
+  try {
+    await User.updateMany(
+      { _id: { $in: studentIds }, school: req.user.school },
+      { $set: { class: toClassId } }
+    );
+
+    await PromotionHistory.create({
+      school: req.user.school,
+      branch: req.branchId,
+      promotionType,
+      fromClass: fromClassId,
+      toClass: toClassId,
+      studentIds,
+      studentCount: studentIds.length,
+      promotedBy: req.user._id
+    });
+
+    res.json({ message: 'Students promoted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Academic Calendar ---
+export const getCalendarEvents = async (req, res) => {
+  try {
+    const events = await CalendarEvent.find({ school: req.user.school });
+    res.json(events);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createCalendarEvent = async (req, res) => {
+  try {
+    const event = await CalendarEvent.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      createdBy: req.user._id
+    });
+    res.status(201).json(event);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Feature Usage Analytics ---
+export const getUsageAnalytics = async (req, res) => {
+  try {
+    const school = await School.findById(req.user.school).populate('subscription.plan');
+    const studentCount = await User.countDocuments({ school: req.user.school, role: 'student' });
+    const teacherCount = await User.countDocuments({ school: req.user.school, role: 'teacher' });
+    
+    const limits = school.subscription.limits;
+    const usage = {
+      students: { used: studentCount, limit: limits.students, percent: (studentCount / limits.students) * 100 },
+      teachers: { used: teacherCount, limit: limits.teachers, percent: (teacherCount / limits.teachers) * 100 },
+      storage: { used: 0, limit: limits.storage, percent: 0 } // Storage calculation logic
+    };
+
+    res.json(usage);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Support Ticket System ---
+export const createSupportTicket = async (req, res) => {
+  try {
+    const ticketCount = await SupportTicket.countDocuments();
+    const ticket = await SupportTicket.create({
+      ...req.body,
+      ticketId: `TKT-${ticketCount + 1000}`,
+      school: req.user.school,
+      user: req.user._id
+    });
+    res.status(201).json(ticket);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getSupportTickets = async (req, res) => {
+  try {
+    const tickets = await SupportTicket.find({ school: req.user.school }).sort({ createdAt: -1 });
+    res.json(tickets);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Data Export Center ---
+export const exportData = async (req, res) => {
+  const { type, format } = req.query;
+  try {
+    let data;
+    if (type === 'students') {
+      data = await User.find({ school: req.user.school, role: 'student' }).populate('class');
+    } else if (type === 'payments') {
+      data = await MonthlyPayment.find({ school: req.user.school }).populate('student');
+    }
+    // Implementation for PDF/CSV/Excel export logic
+    res.json({ message: 'Export logic triggered', type, format });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 // --- Student Profile Search ---
@@ -44,19 +318,37 @@ export const getStudentProfile = async (req, res) => {
       return res.status(404).json({ message: 'Student not found' });
     }
 
+    const academicMatch = { school: schoolId };
+    if (req.branchId) academicMatch.branch = req.branchId;
+    if (req.academicYearName) academicMatch.academicYear = req.academicYearName;
+
     const attendance = await Attendance.find({ 
       user: student._id,
-      school: schoolId 
+      ...academicMatch
     }).populate('subject', 'name').sort({ date: -1 });
     
     const payments = await MonthlyPayment.find({ 
       student: student._id,
-      school: schoolId 
+      ...academicMatch
     }).sort({ year: 1, createdAt: 1 });
+
+    const discountHistory = await DiscountAssignment.find({
+      school: schoolId,
+      $or: [
+        { scope: { $in: ['student', 'students'] }, students: student._id },
+        ...(student.class?._id ? [{ scope: 'class', class: student.class._id }] : []),
+        ...(student.class?.name ? [{ scope: 'grade', grade: student.class.name }] : []),
+      ],
+    })
+      .populate('discount')
+      .populate('assignedBy updatedBy removedBy', 'name email')
+      .sort({ startDate: -1, createdAt: -1 });
+
+    const activeDiscounts = await getActiveDiscountAssignmentsForStudent(student);
 
     const marks = await Mark.find({ 
       student: student._id,
-      school: schoolId 
+      ...academicMatch
     }).populate('subject', 'name code').sort({ createdAt: -1 });
 
     // --- Academic Ranking Logic ---
@@ -126,6 +418,8 @@ export const getStudentProfile = async (req, res) => {
       student,
       attendance,
       payments,
+      activeDiscounts,
+      discountHistory,
       marks,
       academicHistory
     });
@@ -213,7 +507,10 @@ const generateUniqueId = async (role, schoolId) => {
 
 // --- Student Management ---
 export const createStudent = async (req, res) => {
-  const schoolId = req.user.school?._id || req.user.school;
+  const schoolId = req.schoolId || req.user.school?._id || req.user.school;
+  const branchId = await resolveBranchId(req);
+  const academicYearId = req.academicYearId || (await getCurrentAcademicYear(schoolId))?._id;
+  
   const { 
     name, 
     phone,
@@ -222,7 +519,7 @@ export const createStudent = async (req, res) => {
     email, 
     password, 
     classId, 
-    customId,
+    customId: providedCustomId,
     // Extended profile fields
     gender,
     placeOfBirth,
@@ -321,33 +618,31 @@ export const createStudent = async (req, res) => {
         userMessage: 'Selected class does not exist.'
       });
     }
+
+    // Student ID logic
+    let finalCustomId = providedCustomId?.trim();
     
-    // Student ID must be provided by admin
-    if (!customId || !customId.trim()) {
-      return res.status(400).json({ 
-        message: 'Student ID is required',
-        userMessage: 'Student ID is required. Please enter a unique Student ID.'
-      });
+    if (finalCustomId) {
+      // Validate provided Student ID format (alphanumeric only)
+      if (!/^[A-Za-z0-9]+$/.test(finalCustomId)) {
+        return res.status(400).json({ 
+          message: 'Student ID must contain only letters and numbers',
+          userMessage: 'Student ID must contain only letters and numbers (no spaces or symbols).'
+        });
+      }
+      
+      // Check if Student ID already exists in this school
+      const existingStudentId = await User.findOne({ customId: finalCustomId, school: schoolId });
+      if (existingStudentId) {
+        // If duplicate exists and it was provided by admin, return error
+        // BUT the requirement says: "If duplicate exists: Generate a new unique ID automatically."
+        // We'll follow the requirement and generate a new one if it conflicts.
+        finalCustomId = await generateUniqueId('student', schoolId);
+      }
+    } else {
+      // Auto-generate if not provided
+      finalCustomId = await generateUniqueId('student', schoolId);
     }
-    
-    // Validate Student ID format (alphanumeric only)
-    if (!/^[A-Za-z0-9]+$/.test(customId.trim())) {
-      return res.status(400).json({ 
-        message: 'Student ID must contain only letters and numbers',
-        userMessage: 'Student ID must contain only letters and numbers (no spaces or symbols).'
-      });
-    }
-    
-    // Check if Student ID already exists in this school
-    const existingStudentId = await User.findOne({ customId: customId.trim(), school: schoolId });
-    if (existingStudentId) {
-      return res.status(400).json({ 
-        message: 'Student ID already exists',
-        userMessage: 'This Student ID already exists in this school. Please use a different ID.'
-      });
-    }
-    
-    const studentIdStr = customId.trim();
 
     const user = await User.create({
       name: name.trim(),
@@ -355,10 +650,12 @@ export const createStudent = async (req, res) => {
       age: age !== undefined && age !== '' ? Number(age) : undefined,
       monthlyFees: monthlyFees !== undefined && monthlyFees !== '' ? Number(monthlyFees) : 0,
       email: email || undefined,
-      customId: studentIdStr,
+      customId: finalCustomId,
       password,
       role: 'student',
       school: schoolId,
+      branch: branchId, // Ensure branch is assigned
+      academicYear: req.academicYearId, // Ensure academic year ID is assigned
       class: classId,
       // Extended profile
       gender: gender || undefined,
@@ -370,9 +667,16 @@ export const createStudent = async (req, res) => {
       emergencyContact: emergencyContact?.trim() || undefined,
       entryTime: entryTime?.trim() || undefined,
       studentMode: studentMode || 'Full-time',
-      profileImage: profileImage || undefined,
+      profileImage: (profileImage && typeof profileImage === 'object') ? profileImage : undefined,
     });
     
+    logAction(req, {
+      action: 'STUDENT_CREATED',
+      module: 'STUDENTS',
+      targetId: user._id,
+      details: { customId: user.customId, name: user.name }
+    });
+
     res.status(201).json(user);
   } catch (error) {
     // Handle MongoDB duplicate key error
@@ -389,10 +693,193 @@ export const createStudent = async (req, res) => {
   }
 };
 
+export const getParents = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+
+    const query = { 
+      role: 'parent', 
+      school: schoolId,
+      deletedAt: { $exists: false }
+    };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getParents: tenantId=${schoolId}, branchId=${branchId}`);
+
+    const parents = await User.find(query)
+      .populate({
+        path: 'linkedStudents',
+        select: 'name customId class',
+        populate: { path: 'class', select: 'name section' }
+      });
+    res.json(parents);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createParent = async (req, res) => {
+  const { name, email, phone, customId, password } = req.body;
+  const schoolId = req.user.school?._id || req.user.school;
+  const branchId = await resolveBranchId(req);
+
+  try {
+    // Validate required fields
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: 'Full name is required' });
+    }
+    if (!password || password.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    }
+
+    // Check if parent already exists (email or customId)
+    const orClause = [];
+    if (email) orClause.push({ email: email.trim().toLowerCase() });
+    if (customId) orClause.push({ customId: customId.trim() });
+
+    if (orClause.length > 0) {
+      const existingParent = await User.findOne({
+        school: schoolId,
+        $or: orClause,
+        role: 'parent'
+      });
+      if (existingParent) {
+        return res.status(400).json({ message: 'Parent with this email or ID already exists' });
+      }
+    }
+
+    const parent = await User.create({
+      name: name.trim(),
+      email: email ? email.trim().toLowerCase() : undefined,
+      phone: phone ? phone.trim() : undefined,
+      customId: customId?.trim(),
+      password,
+      role: 'parent',
+      school: schoolId,
+      branch: branchId,
+      status: 'active'
+    });
+
+    logAction(req, {
+      action: 'PARENT_CREATED',
+      module: 'PARENTS',
+      targetId: parent._id,
+      details: { name: parent.name, customId: parent.customId }
+    });
+
+    res.status(201).json(parent);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+export const updateParent = async (req, res) => {
+  const { id } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId;
+  const { name, email, phone, customId, status, profileImage } = req.body;
+
+  try {
+    const query = {
+      _id: id,
+      role: 'parent',
+      school: schoolId,
+      deletedAt: { $exists: false }
+    };
+    if (branchId) query.branch = branchId;
+
+    const parent = await User.findOne(query);
+    if (!parent) {
+      return res.status(404).json({
+        message: 'Parent not found',
+        userMessage: 'Parent not found in your school or branch.'
+      });
+    }
+
+    if (name !== undefined) parent.name = name.trim();
+    if (email !== undefined) parent.email = email ? email.trim().toLowerCase() : undefined;
+    if (phone !== undefined) parent.phone = phone ? phone.trim() : undefined;
+    if (customId !== undefined) parent.customId = customId ? customId.trim() : undefined;
+    if (status !== undefined) parent.status = status;
+    if (profileImage !== undefined) parent.profileImage = profileImage;
+
+    await parent.save();
+
+    logAction(req, {
+      action: 'PARENT_UPDATED',
+      module: 'PARENTS',
+      targetId: parent._id,
+      details: { name: parent.name, customId: parent.customId }
+    });
+
+    res.json(parent);
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Parent email or ID already exists' });
+    }
+    res.status(400).json({ message: error.message });
+  }
+};
+
+export const deleteParent = async (req, res) => {
+  const { id } = req.params;
+  const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId;
+
+  try {
+    const query = {
+      _id: id,
+      role: 'parent',
+      school: schoolId,
+      deletedAt: { $exists: false }
+    };
+    if (branchId) query.branch = branchId;
+
+    const parent = await User.findOne(query);
+    if (!parent) {
+      return res.status(404).json({
+        message: 'Parent not found',
+        userMessage: 'Parent not found in your school or branch.'
+      });
+    }
+
+    parent.deletedAt = new Date();
+    parent.isDeleted = true;
+    await parent.save();
+
+    logAction(req, {
+      action: 'PARENT_DELETED',
+      module: 'PARENTS',
+      targetId: parent._id,
+      details: { name: parent.name, customId: parent.customId }
+    });
+
+    res.json({ message: 'Parent deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const getStudents = async (req, res) => {
   try {
     const schoolId = req.user.school?._id || req.user.school;
-    const students = await User.find({ role: 'student', school: schoolId }).populate('class');
+    const branchId = await resolveBranchId(req);
+    const academicYearId = req.academicYearId || (await getCurrentAcademicYear(schoolId))?._id;
+
+    const query = { 
+      role: 'student', 
+      school: schoolId,
+      isDeleted: false
+    };
+    if (branchId) query.branch = branchId;
+    // Removed strict academicYear filter to prevent missing older students
+    // if (academicYearId) query.academicYear = academicYearId;
+
+    console.log(`[DEBUG] getStudents: tenantId=${schoolId}, branchId=${branchId}`);
+
+    const students = await User.find(query).populate('class').populate('branch', 'name');
+    console.log(`[DEBUG] getStudents: Found ${students.length} students`);
     res.json(students);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -563,7 +1050,7 @@ export const updateStudent = async (req, res) => {
     if (emergencyContact !== undefined) student.emergencyContact = emergencyContact?.trim() || undefined;
     if (entryTime !== undefined)        student.entryTime        = entryTime?.trim() || undefined;
     if (studentMode !== undefined)      student.studentMode      = studentMode || 'Full-time';
-    if (profileImage !== undefined)     student.profileImage     = profileImage;
+    if (profileImage !== undefined)     student.profileImage     = (profileImage && typeof profileImage === 'object') ? profileImage : undefined;
 
     await student.save();
     res.json(student);
@@ -586,22 +1073,43 @@ export const deleteStudent = async (req, res) => {
   const { id } = req.params;
   const schoolId = req.user.school?._id || req.user.school;
   try {
-    const student = await User.findOneAndDelete({ _id: id, role: 'student', school: schoolId });
+    const student = await User.findOne({ _id: id, role: 'student', school: schoolId });
     if (!student) {
       return res.status(404).json({ 
         message: 'Student not found',
         userMessage: 'Student not found.'
       });
     }
+
+    student.isDeleted = true;
+    student.deletedAt = new Date();
+    student.deletedBy = req.user._id;
+    student.status = 'inactive';
+    await student.save();
+
     res.json({ 
-      message: 'Student deleted successfully',
-      userMessage: 'Student deleted successfully.'
+      message: 'Student archived successfully',
+      userMessage: 'Student has been moved to archive.'
     });
   } catch (error) {
     res.status(500).json({ 
       message: error.message,
       userMessage: 'Something went wrong. Please try again.'
     });
+  }
+};
+
+export const restoreStudent = async (req, res) => {
+  try {
+    const student = await restoreRecord(User, req.params.id, req.user._id);
+    if (!student || student.role !== 'student') {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+    student.status = 'active';
+    await student.save();
+    res.json({ message: 'Student restored successfully', student });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -682,13 +1190,21 @@ export const transferStudent = async (req, res) => {
 // --- Attendance Management ---
 export const getAllAttendance = async (req, res) => {
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId;
   try {
-    const attendance = await Attendance.find({ school: schoolId })
+    const query = { school: schoolId };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getAllAttendance: tenantId=${schoolId}, branchId=${branchId}`);
+
+    const attendance = await Attendance.find(query)
       .populate('user', 'name customId')
       .populate('class', 'name section')
       .populate('subject', 'name code')
       .populate('markedBy', 'name')
+      .populate('branch', 'name')
       .sort({ date: -1 });
+    console.log(`[DEBUG] getAllAttendance: Found ${attendance.length} records`);
     res.json(attendance);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -767,9 +1283,14 @@ export const deleteAttendance = async (req, res) => {
 // --- Payment Management ---
 export const getAllPayments = async (req, res) => {
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId;
   try {
-    const payments = await Payment.find({ school: schoolId })
+    const query = { school: schoolId };
+    if (branchId) query.branch = branchId;
+
+    const payments = await Payment.find(query)
       .populate('student', 'name customId')
+      .populate('branch', 'name')
       .sort({ date: -1 });
     res.json(payments);
   } catch (error) {
@@ -780,11 +1301,19 @@ export const getAllPayments = async (req, res) => {
 // --- Exam & Marks Management ---
 export const getAllExams = async (req, res) => {
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId;
   try {
-    const exams = await Exam.find({ school: schoolId })
+    const query = { school: schoolId };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getAllExams: tenantId=${schoolId}, branchId=${branchId}`);
+
+    const exams = await Exam.find(query)
       .populate('class', 'name section')
       .populate('subject', 'name code')
+      .populate('branch', 'name')
       .sort({ date: -1 });
+    console.log(`[DEBUG] getAllExams: Found ${exams.length} records`);
     res.json(exams);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -795,6 +1324,13 @@ export const createExam = async (req, res) => {
   const { name, term, date, classId, subjectId, maxMarks } = req.body;
   const schoolId = req.user.school?._id || req.user.school;
   try {
+    // Resolve branch ID for the exam (defaulting to the class's branch if missing)
+    let targetBranchId = req.branchId || req.user.branch;
+    if (!targetBranchId) {
+      const cls = await Class.findById(classId);
+      targetBranchId = cls?.branch;
+    }
+
     const exam = await Exam.create({
       name,
       term,
@@ -803,6 +1339,8 @@ export const createExam = async (req, res) => {
       subject: subjectId,
       maxMarks,
       school: schoolId,
+      branch: targetBranchId,
+      academicYear: req.academicYearName,
     });
     res.status(201).json(exam);
   } catch (error) {
@@ -822,6 +1360,36 @@ export const publishExam = async (req, res) => {
     if (!exam) {
       return res.status(404).json({ message: 'Exam not found' });
     }
+
+    // Notify Students and Parents
+    const students = await User.find({ role: 'student', class: exam.class, school: schoolId });
+    for (const student of students) {
+      const title = '📊 Exam Results Published';
+      const message = `Results for your exam "${exam.name}" have been published. You can now view them in your portal.`;
+      
+      await sendNotification({
+        recipientId: student._id,
+        schoolId,
+        branchId: exam.branch || student.branch,
+        title,
+        message,
+        type: 'exam'
+      });
+
+      // Parents
+      const parents = await User.find({ role: 'parent', linkedStudents: student._id, school: schoolId });
+      for (const parent of parents) {
+        await sendNotification({
+          recipientId: parent._id,
+          schoolId,
+          branchId: parent.branch,
+          title: `📊 Exam Results Published: ${student.name}`,
+          message: `Exam results for ${student.name} ("${exam.name}") have been published.`,
+          type: 'exam'
+        });
+      }
+    }
+
     res.json(exam);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -944,13 +1512,20 @@ export const updateExamMarks = async (req, res) => {
 
 export const createExamSession = async (req, res) => {
   const { name, date, maxMarks, classIds, subjectIds } = req.body;
-  const schoolId = req.user.school?._id || req.user.school;
+  const schoolId = req.schoolId;
+  const branchId = req.branchId;
   try {
     if (!name || !date || !maxMarks || !classIds || classIds.length === 0) {
       return res.status(400).json({
         message: 'All fields are required',
         userMessage: 'Please fill in all required fields and select at least one class.'
       });
+    }
+
+    let targetBranchId = branchId || req.user?.branch;
+    if (!targetBranchId && classIds.length > 0) {
+      const cls = await Class.findById(classIds[0]);
+      targetBranchId = cls?.branch;
     }
 
     const examSession = await ExamSession.create({
@@ -960,6 +1535,7 @@ export const createExamSession = async (req, res) => {
       classes: classIds,
       subjects: subjectIds || [],
       school: schoolId,
+      branch: targetBranchId, // Automatic branch ownership
       status: 'Scheduled'
     });
 
@@ -1246,6 +1822,7 @@ export const submitClassExamMarks = async (req, res) => {
           marks: marksNum,
           remarks: remarks || '',
           school: req.user.school,
+          branch: req.branchId || req.user.branch || examSession.branch,
           gradedBy: req.user._id
         };
         if (targetField) {
@@ -1362,11 +1939,15 @@ export const checkTeacherId = async (req, res) => {
 };
 
 export const createTeacher = async (req, res) => {
+  const schoolId = req.schoolId || req.user.school?._id || req.user.school;
+  const branchId = await resolveBranchId(req);
+  const academicYearId = req.academicYearId || (await getCurrentAcademicYear(schoolId))?._id;
+
   const { 
     name, 
     email, 
     password, 
-    customId,
+    customId: providedCustomId,
     phone,
     age,
     subjects,
@@ -1457,7 +2038,7 @@ export const createTeacher = async (req, res) => {
     }
     const validSubjects = await Subject.find({
       _id: { $in: subjects },
-      school: req.user.school
+      school: schoolId
     });
     
     if (validSubjects.length !== subjects.length) {
@@ -1467,36 +2048,53 @@ export const createTeacher = async (req, res) => {
       });
     }
     
-    // Generate or validate teacher ID
-    let teacherId = customId;
-    if (teacherId && teacherId.trim()) {
-      // Check if custom ID already exists
-      const existingId = await User.findOne({ customId: teacherId.trim() });
-      if (existingId) {
+    // Teacher ID logic
+    let finalCustomId = providedCustomId?.trim();
+    
+    if (finalCustomId) {
+      // Validate provided Teacher ID format (alphanumeric only)
+      if (!/^[A-Za-z0-9]+$/.test(finalCustomId)) {
         return res.status(400).json({ 
-          message: 'Teacher ID already exists',
-          userMessage: 'This Teacher ID already exists. Please use a different ID.'
+          message: 'Teacher ID must contain only letters and numbers',
+          userMessage: 'Teacher ID must contain only letters and numbers (no spaces or symbols).'
         });
       }
+      
+      // Check if Teacher ID already exists in this school
+      const existingTeacherId = await User.findOne({ customId: finalCustomId, school: schoolId });
+      if (existingTeacherId) {
+        // If duplicate exists, follow requirement: Generate a new unique ID automatically.
+        finalCustomId = await generateUniqueId('teacher', schoolId);
+      }
     } else {
-      teacherId = await generateUniqueId('teacher', req.user.school);
+      // Auto-generate if not provided
+      finalCustomId = await generateUniqueId('teacher', schoolId);
     }
 
     const user = await User.create({
       name: name.trim(),
-      email: email || undefined, // Treat empty string as undefined for sparse index
-      customId: teacherId,
+      email: email || undefined,
+      customId: finalCustomId,
       password,
       phone: phone ? phone.trim() : undefined,
       teacherAge: age !== undefined && age !== '' ? Number(age) : undefined,
       subjects: subjects && subjects.length > 0 ? subjects : [],
       workingStartTime: workingStartTime || undefined,
       workingEndTime: workingEndTime || undefined,
-      profileImage: profileImage || undefined,
+      profileImage: (profileImage && typeof profileImage === 'object') ? profileImage : undefined,
       role: 'teacher',
-      school: req.user.school,
+      school: schoolId,
+      branch: branchId, // Ensure branch is assigned
+      academicYear: academicYearId, // Ensure academic year is assigned
     });
     
+    logAction(req, {
+      action: 'TEACHER_CREATED',
+      module: 'TEACHERS',
+      targetId: user._id,
+      details: { customId: user.customId, name: user.name }
+    });
+
     // Populate subjects before returning
     const populatedUser = await User.findById(user._id).populate('subjects', 'name code');
     
@@ -1518,8 +2116,20 @@ export const createTeacher = async (req, res) => {
 
 export const getTeachers = async (req, res) => {
   try {
-    const teachers = await User.find({ role: 'teacher', school: req.user.school })
-      .populate('subjects', 'name code');
+    const branchId = await resolveBranchId(req);
+    const query = { 
+      role: 'teacher', 
+      school: req.user.school,
+      isDeleted: false
+    };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getTeachers: tenantId=${req.user.school}, branchId=${branchId}`);
+
+    const teachers = await User.find(query)
+      .populate('subjects', 'name code')
+      .populate('branch', 'name');
+    console.log(`[DEBUG] getTeachers: Found ${teachers.length} teachers`);
     res.json(teachers);
   } catch (error) {
     res.status(500).json({ 
@@ -1676,7 +2286,7 @@ export const updateTeacher = async (req, res) => {
       }
     }
 
-    if (profileImage !== undefined)     teacher.profileImage     = profileImage;
+    if (profileImage !== undefined)     teacher.profileImage     = (profileImage && typeof profileImage === 'object') ? profileImage : undefined;
 
     await teacher.save();
     
@@ -1701,22 +2311,43 @@ export const updateTeacher = async (req, res) => {
 export const deleteTeacher = async (req, res) => {
   const { id } = req.params;
   try {
-    const teacher = await User.findOneAndDelete({ _id: id, role: 'teacher', school: req.user.school });
+    const teacher = await User.findOne({ _id: id, role: 'teacher', school: req.user.school });
     if (!teacher) {
       return res.status(404).json({ 
         message: 'Teacher not found',
         userMessage: 'Teacher not found.'
       });
     }
+
+    teacher.isDeleted = true;
+    teacher.deletedAt = new Date();
+    teacher.deletedBy = req.user._id;
+    teacher.status = 'inactive';
+    await teacher.save();
+
     res.json({ 
-      message: 'Teacher deleted successfully',
-      userMessage: 'Teacher deleted successfully.'
+      message: 'Teacher archived successfully',
+      userMessage: 'Teacher has been moved to archive.'
     });
   } catch (error) {
     res.status(500).json({ 
       message: error.message,
       userMessage: 'Something went wrong. Please try again.'
     });
+  }
+};
+
+export const restoreTeacher = async (req, res) => {
+  try {
+    const teacher = await restoreRecord(User, req.params.id, req.user._id);
+    if (!teacher || teacher.role !== 'teacher') {
+      return res.status(404).json({ message: 'Teacher not found' });
+    }
+    teacher.status = 'active';
+    await teacher.save();
+    res.json({ message: 'Teacher restored successfully', teacher });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -1737,7 +2368,10 @@ export const createClass = async (req, res) => {
     if (!Number.isInteger(maxStudents)) return res.status(400).json({ message: 'Max students must be an integer', userMessage: 'Maximum students must be a whole number (no decimals).' });
     if (maxStudents <= 0) return res.status(400).json({ message: 'Max students must be greater than 0', userMessage: 'Maximum students must be greater than zero.' });
 
-    const exists = await Class.findOne({ school: req.user.school, name, section });
+    const branchId = await resolveBranchId(req);
+    const academicYearId = req.academicYearId || (await getCurrentAcademicYear(req.user.school))?._id;
+
+    const exists = await Class.findOne({ school: req.user.school, name, section, branch: branchId });
     if (exists) {
       return res.status(400).json({ 
         message: 'Class with this name and section already exists',
@@ -1750,6 +2384,8 @@ export const createClass = async (req, res) => {
       section,
       maxStudents,
       school: req.user.school,
+      branch: branchId, // Ensure branch is assigned
+      academicYear: academicYearId, // Ensure academic year ID is assigned
     });
     res.status(201).json(newClass);
   } catch (error) {
@@ -1849,15 +2485,19 @@ export const deleteClass = async (req, res) => {
       });
     }
     
-    // Delete related data
-    await ClassSubject.deleteMany({ class: id, school: req.user.school });
-    await Schedule.deleteMany({ class: id, school: req.user.school });
+    // Soft delete related data
+    const softDeleteData = { deletedAt: new Date(), deletedBy: req.user._id };
     
-    await Class.deleteOne({ _id: id, school: req.user.school });
+    await ClassSubject.updateMany({ class: id, school: req.user.school }, { $set: softDeleteData });
+    await Schedule.updateMany({ class: id, school: req.user.school }, { $set: softDeleteData });
+    
+    cls.deletedAt = new Date();
+    cls.deletedBy = req.user._id;
+    await cls.save();
     
     res.json({ 
-      message: 'Class deleted successfully',
-      userMessage: 'Class deleted successfully.'
+      message: 'Class archived successfully',
+      userMessage: 'Class and its assignments have been archived.'
     });
   } catch (error) {
     res.status(400).json({ 
@@ -1898,13 +2538,35 @@ export const getClassById = async (req, res) => {
 
 export const getClasses = async (req, res) => {
   try {
-    const classes = await Class.find({ school: req.user.school })
+    const query = { 
+      school: req.user.school,
+      deletedAt: { $exists: false }
+    };
+    
+    // Only filter by branch if req.branchId is set
+    if (req.branchId) {
+      query.branch = req.branchId;
+    }
+    
+    // Removing strict academic year filter for classes to ensure older classes still load
+    // if (req.academicYearId) {
+    //   query.academicYear = req.academicYearId;
+    // }
+
+    console.log(`[DEBUG] getClasses: tenantId=${req.user.school}, branchId=${req.branchId}`);
+
+    const classes = await Class.find(query)
       .populate('classTeacher')
+      .populate('branch', 'name')
       .lean();
+    console.log(`[DEBUG] getClasses: Found ${classes.length} classes`);
 
     const classIds = classes.map((c) => c._id);
+    const countQuery = { school: req.user.school, class: { $in: classIds }, deletedAt: { $exists: false } };
+    if (req.branchId) countQuery.branch = req.branchId;
+
     const counts = await ClassSubject.aggregate([
-      { $match: { school: req.user.school, class: { $in: classIds } } },
+      { $match: countQuery },
       { $group: { _id: '$class', count: { $sum: 1 } } },
     ]);
     const countMap = Object.fromEntries(counts.map((x) => [String(x._id), x.count]));
@@ -1916,7 +2578,11 @@ export const getClasses = async (req, res) => {
 
     res.json(withCounts);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('[getClasses] error:', error);
+    res.status(500).json({ 
+      message: error.message,
+      userMessage: 'Failed to load classes.'
+    });
   }
 };
 
@@ -1995,10 +2661,15 @@ export const createSubject = async (req, res) => {
       });
     }
     
+    // Resolve branch and academic year automatically
+    const branchId = await resolveBranchId(req);
+    const academicYearId = req.academicYearId || (await getCurrentAcademicYear(req.user.school))?._id;
+    
     // Check for duplicate code (case-insensitive)
     const existingSubject = await Subject.findOne({ 
       school: req.user.school, 
-      code: normalizedCode 
+      code: normalizedCode,
+      branch: branchId 
     });
     
     if (existingSubject) {
@@ -2012,6 +2683,8 @@ export const createSubject = async (req, res) => {
       name: name.trim(),
       code: normalizedCode,
       school: req.user.school,
+      branch: branchId, // Ensure branch is assigned
+      academicYear: academicYearId, // Ensure academic year ID is assigned
     });
     
     res.status(201).json(subject);
@@ -2032,7 +2705,16 @@ export const createSubject = async (req, res) => {
 
 export const getSubjects = async (req, res) => {
   try {
-    const subjects = await Subject.find({ school: req.user.school }).sort({ name: 1 });
+    const branchId = await resolveBranchId(req);
+    const query = { school: req.user.school };
+    if (branchId) query.branch = branchId;
+    
+    console.log(`[DEBUG] getSubjects: tenantId=${req.user.school}, branchId=${branchId}`);
+
+    const subjects = await Subject.find(query)
+      .populate('branch', 'name')
+      .sort({ name: 1 });
+    console.log(`[DEBUG] getSubjects: Found ${subjects.length} subjects`);
     res.json(subjects);
   } catch (error) {
     res.status(500).json({ 
@@ -2128,17 +2810,645 @@ export const deleteSubject = async (req, res) => {
       });
     }
 
-    await ClassSubject.deleteMany({ subject: id, school: req.user.school });
-    await Subject.findByIdAndDelete(id);
+    // Soft delete related data
+    const softDeleteData = { deletedAt: new Date(), deletedBy: req.user._id };
+    
+    await ClassSubject.updateMany({ subject: id, school: req.user.school }, { $set: softDeleteData });
+    
+    subject.deletedAt = new Date();
+    subject.deletedBy = req.user._id;
+    await subject.save();
+
     res.json({ 
-      message: 'Subject deleted successfully',
-      userMessage: 'Subject deleted successfully.'
+      message: 'Subject archived successfully',
+      userMessage: 'Subject and its class assignments have been archived.'
     });
   } catch (error) {
     res.status(500).json({ 
       message: error.message,
       userMessage: 'Something went wrong. Please try again.'
     });
+  }
+};
+
+// --- Fee Structure & Discount Management ---
+export const createFeeStructure = async (req, res) => {
+  try {
+    const fee = await FeeStructure.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      academicYear: req.academicYearId
+    });
+    res.status(201).json(fee);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getFeeStructures = async (req, res) => {
+  try {
+    const fees = await FeeStructure.find({ school: req.user.school, branch: req.branchId }).populate('classFees.class');
+    res.json(fees);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const calculateStudentFee = async (req, res) => {
+  const { studentId, feeStructureId, discountIds = [] } = req.body;
+  try {
+    const student = await User.findOne({ _id: studentId, school: req.user.school, role: 'student' }).populate('class');
+    const fee = await FeeStructure.findOne({ _id: feeStructureId, school: req.user.school });
+
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+    if (!fee) return res.status(404).json({ message: 'Fee structure not found' });
+
+    let baseAmount = fee.baseAmount;
+    if (fee.type === 'class_based') {
+      const classFee = fee.classFees.find(cf => cf.class.toString() === student.class._id.toString());
+      if (classFee) baseAmount = classFee.amount;
+    }
+
+    let calculation;
+    if (discountIds.length) {
+      const discounts = await Discount.find({ _id: { $in: discountIds }, school: req.user.school, isActive: true });
+      calculation = calculateDiscountedAmount(
+        baseAmount,
+        discounts.map((discount) => ({ _id: discount._id, discount }))
+      );
+    } else {
+      calculation = await calculateStudentMonthlyFee(student, baseAmount);
+    }
+
+    res.json({
+      originalFee: calculation.originalAmount,
+      discount: calculation.discountAmount,
+      finalAmount: calculation.finalAmount,
+      appliedDiscounts: calculation.appliedDiscounts,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Approval Workflow ---
+export const requestApproval = async (req, res) => {
+  try {
+    const request = await ApprovalRequest.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      requestedBy: req.user._id
+    });
+    res.status(201).json(request);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const handleApproval = async (req, res) => {
+  const { id } = req.params;
+  const { status, rejectionReason } = req.body;
+  try {
+    const request = await ApprovalRequest.findById(id);
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+
+    request.status = status;
+    request.approvedBy = req.user._id;
+    request.approvedAt = new Date();
+    if (status === 'rejected') request.rejectionReason = rejectionReason;
+
+    await request.save();
+
+    // Trigger secondary logic if approved (e.g. transfer student)
+    if (status === 'approved') {
+      if (request.type === 'student_transfer') {
+        await User.findByIdAndUpdate(request.targetId, { 
+          branch: request.data.toBranchId,
+          class: request.data.toClassId 
+        });
+      }
+    }
+
+    res.json(request);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Asset Management ---
+export const getAssets = async (req, res) => {
+  try {
+    const assets = await Asset.find({ school: req.user.school, branch: req.branchId }).populate('assignedTo', 'name');
+    res.json(assets);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createAsset = async (req, res) => {
+  try {
+    const asset = await Asset.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId
+    });
+    res.status(201).json(asset);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Discounts Management ---
+export const getDiscounts = async (req, res) => {
+  try {
+    const query = { school: req.user.school };
+    if (req.branchId) query.$or = [{ branch: req.branchId }, { branch: { $exists: false } }, { branch: null }];
+    const discounts = await Discount.find(query)
+      .populate('createdBy updatedBy', 'name email')
+      .sort({ createdAt: -1 });
+    res.json(discounts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createDiscount = async (req, res) => {
+  try {
+    const value = Number(req.body.value);
+    if (!req.body.name?.trim()) return res.status(400).json({ message: 'Discount name is required' });
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: 'Discount value must be greater than zero' });
+    if (req.body.valueType === 'percentage' && value > 100) return res.status(400).json({ message: 'Percentage discount cannot exceed 100%' });
+
+    const discount = await Discount.create({
+      ...req.body,
+      name: req.body.name.trim(),
+      value,
+      school: req.user.school,
+      branch: req.branchId,
+      code: req.body.code?.trim()?.toUpperCase(),
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    logFinanceAction(req, {
+      action: 'DISCOUNT_CREATE',
+      targetId: discount._id,
+      newValue: discount.toObject(),
+      metadata: { discountName: discount.name },
+    });
+
+    res.status(201).json(discount);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateDiscount = async (req, res) => {
+  try {
+    const discount = await Discount.findOne({ _id: req.params.id, school: req.user.school });
+    if (!discount) return res.status(404).json({ message: 'Discount not found' });
+
+    const oldValue = discount.toObject();
+    const allowed = ['name', 'type', 'valueType', 'value', 'code', 'description', 'isActive'];
+    allowed.forEach((field) => {
+      if (req.body[field] !== undefined) discount[field] = req.body[field];
+    });
+    if (discount.name) discount.name = discount.name.trim();
+    if (discount.code) discount.code = discount.code.trim().toUpperCase();
+    if (discount.value !== undefined) {
+      discount.value = Number(discount.value);
+      if (!Number.isFinite(discount.value) || discount.value <= 0) {
+        return res.status(400).json({ message: 'Discount value must be greater than zero' });
+      }
+      if (discount.valueType === 'percentage' && discount.value > 100) {
+        return res.status(400).json({ message: 'Percentage discount cannot exceed 100%' });
+      }
+    }
+    discount.updatedBy = req.user._id;
+    await discount.save();
+
+    logFinanceAction(req, {
+      action: 'DISCOUNT_UPDATE',
+      targetId: discount._id,
+      oldValue,
+      newValue: discount.toObject(),
+      metadata: { discountName: discount.name },
+    });
+
+    res.json(discount);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getDiscountAssignments = async (req, res) => {
+  try {
+    const query = { school: req.user.school };
+    if (req.branchId) query.$or = [{ branch: req.branchId }, { branch: { $exists: false } }, { branch: null }];
+    if (req.query.studentId) query.students = req.query.studentId;
+    if (req.query.discountId) query.discount = req.query.discountId;
+    if (req.query.active === 'true') query.isActive = true;
+    if (req.query.active === 'false') query.isActive = false;
+
+    const assignments = await DiscountAssignment.find(query)
+      .populate('discount')
+      .populate('students', 'name customId')
+      .populate('class', 'name section')
+      .populate('assignedBy updatedBy removedBy', 'name email')
+      .sort({ createdAt: -1 });
+
+    res.json(assignments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const assignDiscount = async (req, res) => {
+  try {
+    const {
+      discountId,
+      scope,
+      studentId,
+      studentIds = [],
+      classId,
+      grade,
+      duration = 'permanent',
+      startDate,
+      endDate,
+      reason,
+    } = req.body;
+
+    const discount = await Discount.findOne({ _id: discountId, school: req.user.school, isActive: true });
+    if (!discount) return res.status(404).json({ message: 'Active discount not found' });
+    if (!['student', 'students', 'class', 'grade'].includes(scope)) {
+      return res.status(400).json({ message: 'Invalid discount assignment scope' });
+    }
+
+    const assignmentStudents = scope === 'student'
+      ? [studentId].filter(Boolean)
+      : scope === 'students'
+        ? studentIds.filter(Boolean)
+        : [];
+
+    if ((scope === 'student' || scope === 'students') && assignmentStudents.length === 0) {
+      return res.status(400).json({ message: 'Select at least one student' });
+    }
+    if (scope === 'class' && !classId) return res.status(400).json({ message: 'Class is required' });
+    if (scope === 'grade' && !grade?.trim()) return res.status(400).json({ message: 'Grade is required' });
+
+    if (assignmentStudents.length) {
+      const studentCount = await User.countDocuments({
+        _id: { $in: assignmentStudents },
+        school: req.user.school,
+        role: 'student',
+      });
+      if (studentCount !== assignmentStudents.length) {
+        return res.status(400).json({ message: 'One or more selected students are invalid' });
+      }
+    }
+
+    if (scope === 'class') {
+      const classExists = await Class.exists({ _id: classId, school: req.user.school });
+      if (!classExists) return res.status(400).json({ message: 'Selected class is invalid' });
+    }
+
+    const startsAt = startDate ? new Date(startDate) : new Date();
+    const endsAt = resolveDiscountEndDate(duration, startsAt, endDate);
+    if (endsAt && endsAt < startsAt) {
+      return res.status(400).json({ message: 'End date must be after start date' });
+    }
+
+    const assignment = await DiscountAssignment.create({
+      school: req.user.school,
+      branch: req.branchId,
+      discount: discount._id,
+      discountSnapshot: {
+        name: discount.name,
+        type: discount.type,
+        valueType: discount.valueType,
+        value: discount.value,
+        code: discount.code,
+      },
+      scope,
+      students: assignmentStudents,
+      class: scope === 'class' ? classId : undefined,
+      grade: scope === 'grade' ? grade.trim() : undefined,
+      duration,
+      startDate: startsAt,
+      endDate: endsAt,
+      reason,
+      assignedBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    logFinanceAction(req, {
+      action: 'DISCOUNT_ASSIGN',
+      targetId: assignment._id,
+      newValue: assignment.toObject(),
+      metadata: { discountName: discount.name, scope },
+    });
+
+    const populated = await DiscountAssignment.findById(assignment._id)
+      .populate('discount')
+      .populate('students', 'name customId')
+      .populate('class', 'name section')
+      .populate('assignedBy', 'name email');
+
+    res.status(201).json(populated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateDiscountAssignment = async (req, res) => {
+  try {
+    const assignment = await DiscountAssignment.findOne({ _id: req.params.id, school: req.user.school });
+    if (!assignment) return res.status(404).json({ message: 'Discount assignment not found' });
+
+    const oldValue = assignment.toObject();
+    const allowed = ['duration', 'startDate', 'endDate', 'reason', 'isActive'];
+    allowed.forEach((field) => {
+      if (req.body[field] !== undefined) assignment[field] = req.body[field];
+    });
+    if (req.body.duration || req.body.startDate || req.body.endDate !== undefined) {
+      assignment.endDate = resolveDiscountEndDate(
+        assignment.duration,
+        assignment.startDate,
+        req.body.endDate
+      );
+    }
+    assignment.updatedBy = req.user._id;
+    await assignment.save();
+
+    logFinanceAction(req, {
+      action: 'DISCOUNT_ASSIGNMENT_UPDATE',
+      targetId: assignment._id,
+      oldValue,
+      newValue: assignment.toObject(),
+    });
+
+    res.json(assignment);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const removeDiscountAssignment = async (req, res) => {
+  try {
+    const assignment = await DiscountAssignment.findOne({ _id: req.params.id, school: req.user.school });
+    if (!assignment) return res.status(404).json({ message: 'Discount assignment not found' });
+
+    const oldValue = assignment.toObject();
+    assignment.isActive = false;
+    assignment.removedAt = new Date();
+    assignment.removedBy = req.user._id;
+    assignment.updatedBy = req.user._id;
+    await assignment.save();
+
+    logFinanceAction(req, {
+      action: 'DISCOUNT_REMOVE',
+      targetId: assignment._id,
+      oldValue,
+      newValue: assignment.toObject(),
+    });
+
+    res.json({ message: 'Discount assignment removed', assignment });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getDiscountReports = async (req, res) => {
+  try {
+    const { startDate, endDate, type } = req.query;
+    const school = req.user.school;
+
+    const paymentFilter = { school };
+    if (req.branchId) paymentFilter.branch = req.branchId;
+    if (startDate || endDate) {
+      paymentFilter.createdAt = {};
+      if (startDate) paymentFilter.createdAt.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        paymentFilter.createdAt.$lte = end;
+      }
+    }
+
+    const assignmentFilter = { school };
+    if (req.branchId) assignmentFilter.$or = [{ branch: req.branchId }, { branch: { $exists: false } }, { branch: null }];
+    if (type) assignmentFilter['discountSnapshot.type'] = type;
+
+    const [payments, assignments] = await Promise.all([
+      MonthlyPayment.find(paymentFilter).populate('student', 'name customId').populate('class', 'name section'),
+      DiscountAssignment.find(assignmentFilter).populate('discount').populate('students', 'name customId').populate('class', 'name section'),
+    ]);
+
+    const discountedPayments = payments.filter((p) => Number(p.discountAmount || 0) > 0);
+    const totalOriginal = payments.reduce((sum, p) => sum + Number(p.originalAmount || p.amount || 0), 0);
+    const totalDiscount = payments.reduce((sum, p) => sum + Number(p.discountAmount || 0), 0);
+    const netRevenue = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const outstandingAfterDiscount = payments
+      .filter((p) => p.status === 'UNPAID')
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+    const byType = {};
+    discountedPayments.forEach((payment) => {
+      payment.appliedDiscounts.forEach((discount) => {
+        const key = discount.type || 'custom';
+        byType[key] ||= { type: key, count: 0, amount: 0 };
+        byType[key].count += 1;
+        byType[key].amount += Number(discount.amount || 0);
+      });
+    });
+
+    const scholarshipTypes = ['scholarship', 'merit', 'financial_aid'];
+    const scholarshipPayments = discountedPayments.filter((payment) =>
+      payment.appliedDiscounts.some((discount) => scholarshipTypes.includes(discount.type))
+    );
+
+    res.json({
+      summary: {
+        totalOriginal,
+        totalDiscount,
+        netRevenue,
+        outstandingAfterDiscount,
+        discountedInvoiceCount: discountedPayments.length,
+        activeAssignmentCount: assignments.filter((a) => a.isActive).length,
+      },
+      discountReport: {
+        byType: Object.values(byType),
+        assignments,
+        payments: discountedPayments,
+      },
+      scholarshipReport: {
+        totalAmount: scholarshipPayments.reduce((sum, p) => sum + Number(p.discountAmount || 0), 0),
+        count: scholarshipPayments.length,
+        payments: scholarshipPayments,
+      },
+      revenueImpactReport: {
+        grossRevenue: totalOriginal,
+        discountImpact: totalDiscount,
+        netRevenue,
+        outstandingAfterDiscount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Library Management ---
+export const getLibraryBooks = async (req, res) => {
+  try {
+    const books = await LibraryBook.find({ school: req.user.school, branch: req.branchId }).sort({ createdAt: -1 });
+    res.json(books);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createLibraryBook = async (req, res) => {
+  try {
+    const book = await LibraryBook.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      availableQuantity: req.body.availableQuantity ?? req.body.quantity ?? 1,
+      createdBy: req.user._id
+    });
+    res.status(201).json(book);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const issueLibraryBook = async (req, res) => {
+  try {
+    const { bookId, userId, dueDate, remarks } = req.body;
+    const book = await LibraryBook.findOne({ _id: bookId, school: req.user.school, branch: req.branchId });
+
+    if (!book) {
+      return res.status(404).json({ message: 'Book not found' });
+    }
+
+    if ((book.availableQuantity || 0) <= 0) {
+      return res.status(400).json({ message: 'No copies available for issue' });
+    }
+
+    book.availableQuantity = Math.max(0, (book.availableQuantity || 0) - 1);
+    await book.save();
+
+    const issue = await LibraryIssue.create({
+      school: req.user.school,
+      branch: req.branchId,
+      book: bookId,
+      user: userId,
+      dueDate,
+      remarks,
+      createdBy: req.user._id
+    });
+
+    res.status(201).json(issue);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const returnLibraryBook = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const issue = await LibraryIssue.findById(id).populate('book');
+
+    if (!issue) {
+      return res.status(404).json({ message: 'Issue not found' });
+    }
+
+    issue.status = 'Returned';
+    issue.returnDate = new Date();
+    issue.updatedBy = req.user._id;
+    await issue.save();
+
+    if (issue.book) {
+      await LibraryBook.findByIdAndUpdate(issue.book._id, {
+        $inc: { availableQuantity: 1 }
+      });
+    }
+
+    res.json(issue);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Transport Management ---
+export const getTransportRoutes = async (req, res) => {
+  try {
+    const routes = await TransportRoute.find({ school: req.user.school, branch: req.branchId }).sort({ createdAt: -1 });
+    res.json(routes);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createTransportRoute = async (req, res) => {
+  try {
+    const route = await TransportRoute.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      createdBy: req.user._id
+    });
+    res.status(201).json(route);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getTransportVehicles = async (req, res) => {
+  try {
+    const vehicles = await TransportVehicle.find({ school: req.user.school, branch: req.branchId }).sort({ createdAt: -1 });
+    res.json(vehicles);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createTransportVehicle = async (req, res) => {
+  try {
+    const vehicle = await TransportVehicle.create({
+      ...req.body,
+      school: req.user.school,
+      branch: req.branchId,
+      createdBy: req.user._id
+    });
+    res.status(201).json(vehicle);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Security & Session Management ---
+export const getActiveSessions = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('activeSessions loginHistory');
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const revokeSession = async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    await User.findByIdAndUpdate(req.user._id, {
+      $pull: { activeSessions: { sessionId } }
+    });
+    res.json({ message: 'Session revoked' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -2226,19 +3536,31 @@ export const removeClassSubjectAssignment = async (req, res) => {
 export const getDashboardStats = async (req, res) => {
   try {
     const schoolId = req.user.school;
+    const branchId = req.branchId; // From branchIsolation middleware
+    const academicYearId = req.academicYearId; // From injectAcademicYear middleware
+    
     if (!schoolId) {
       return res.status(400).json({ message: 'User is not associated with a school' });
     }
-    const totalStudents = await User.countDocuments({ role: 'student', school: schoolId });
-    const totalTeachers = await User.countDocuments({ role: 'teacher', school: schoolId });
-    const totalClasses = await Class.countDocuments({ school: schoolId });
+
+    const query = { school: schoolId };
+    if (branchId) query.branch = branchId;
+    if (academicYearId) query.academicYear = academicYearId;
+
+    const totalStudents = await User.countDocuments({ role: 'student', ...query });
+    const totalTeachers = await User.countDocuments({ role: 'teacher', ...query });
+    const totalClasses = await Class.countDocuments(query);
 
     // Attendance rate (last 30 days)
     const now = new Date();
     const start30Days = new Date(now);
     start30Days.setDate(start30Days.getDate() - 30);
+    
+    const attendanceMatch = { school: schoolId, date: { $gte: start30Days, $lte: now } };
+    if (branchId) attendanceMatch.branch = branchId;
+
     const attendanceAgg = await Attendance.aggregate([
-      { $match: { school: schoolId, date: { $gte: start30Days, $lte: now } } },
+      { $match: attendanceMatch },
       {
         $group: {
           _id: null,
@@ -2260,7 +3582,9 @@ export const getDashboardStats = async (req, res) => {
     const attendanceRate = attendanceTotal > 0 ? Number(((attendancePresentLike / attendanceTotal) * 100).toFixed(1)) : 0;
 
     // Revenue calculations using MonthlyPayment
-    const allPaidPayments = await MonthlyPayment.find({ school: schoolId, status: 'PAID' });
+    const paymentQuery = { school: schoolId, status: 'PAID' };
+    if (branchId) paymentQuery.branch = branchId;
+    const allPaidPayments = await MonthlyPayment.find(paymentQuery);
     const totalRevenue = allPaidPayments.reduce((acc, curr) => acc + curr.amount, 0);
 
     // This Month Revenue (based on paymentDate)
@@ -2274,12 +3598,21 @@ export const getDashboardStats = async (req, res) => {
     const todayRevenue = todayPayments.reduce((acc, curr) => acc + curr.amount, 0);
 
     // Paid vs Unpaid Students (for the most recent PaymentMonth)
-    const latestMonth = await PaymentMonth.findOne({ school: schoolId }).sort({ year: -1, createdAt: -1 });
+    const latestMonthQuery = { school: schoolId };
+    if (branchId) latestMonthQuery.branch = branchId;
+    const latestMonth = await PaymentMonth.findOne(latestMonthQuery).sort({ year: -1, createdAt: -1 });
+    
     let paidCount = 0;
     let unpaidCount = 0;
     if (latestMonth) {
-      paidCount = await MonthlyPayment.countDocuments({ paymentMonth: latestMonth._id, status: 'PAID', school: schoolId });
-      unpaidCount = await MonthlyPayment.countDocuments({ paymentMonth: latestMonth._id, status: 'UNPAID', school: schoolId });
+      const paidQuery = { paymentMonth: latestMonth._id, status: 'PAID', school: schoolId };
+      const unpaidQuery = { paymentMonth: latestMonth._id, status: 'UNPAID', school: schoolId };
+      if (branchId) {
+        paidQuery.branch = branchId;
+        unpaidQuery.branch = branchId;
+      }
+      paidCount = await MonthlyPayment.countDocuments(paidQuery);
+      unpaidCount = await MonthlyPayment.countDocuments(unpaidQuery);
     }
 
     // Revenue per month (last 6 months) for chart
@@ -2299,7 +3632,7 @@ export const getDashboardStats = async (req, res) => {
     }
 
     // Revenue per class
-    const classes = await Class.find({ school: schoolId });
+    const classes = await Class.find(query);
     const revenuePerClass = await Promise.all(classes.map(async (c) => {
       const amount = allPaidPayments
         .filter(p => p.class && p.class.toString() === c._id.toString())
@@ -2308,9 +3641,11 @@ export const getDashboardStats = async (req, res) => {
     }));
 
     // Class ranks (top classes by average marks)
-    // Approach: compute per-student % average within each class, then average across students.
+    const markMatch = { school: schoolId };
+    if (branchId) markMatch.branch = branchId;
+
     const classRanksAgg = await Mark.aggregate([
-      { $match: { school: schoolId } },
+      { $match: markMatch },
       {
         $group: {
           _id: { class: '$class', student: '$student' },
@@ -2367,44 +3702,53 @@ export const getDashboardStats = async (req, res) => {
     ]);
 
     // Recent actions (latest system activities)
+    const recentQuery = { school: schoolId };
+    if (branchId) recentQuery.branch = branchId;
+
     const [recentStudents, recentMarks, recentExams, recentAttendance, recentPaid, recentSchedules] = await Promise.all([
-      User.find({ role: 'student', school: schoolId }).select('name createdAt').sort({ createdAt: -1 }).limit(5),
-      Mark.find({ school: schoolId }).populate('gradedBy', 'name role').sort({ createdAt: -1 }).limit(5),
-      Exam.find({ school: schoolId }).select('name status createdAt updatedAt').sort({ updatedAt: -1 }).limit(5),
-      Attendance.find({ school: schoolId }).populate('markedBy', 'name role').sort({ createdAt: -1 }).limit(5),
-      MonthlyPayment.find({ school: schoolId, status: 'PAID' }).populate('paidBy', 'name role').sort({ paymentDate: -1, updatedAt: -1 }).limit(5),
-      Schedule.find({ school: schoolId }).populate('teacher', 'name role').sort({ updatedAt: -1 }).limit(5),
+      User.find({ role: 'student', ...recentQuery }).populate('branch', 'name').select('name createdAt branch').sort({ createdAt: -1 }).limit(5),
+      Mark.find(recentQuery).populate('gradedBy', 'name role').populate('branch', 'name').sort({ createdAt: -1 }).limit(5),
+      Exam.find(recentQuery).populate('branch', 'name').select('name status createdAt updatedAt branch').sort({ updatedAt: -1 }).limit(5),
+      Attendance.find(recentQuery).populate('markedBy', 'name role').populate('branch', 'name').sort({ createdAt: -1 }).limit(5),
+      MonthlyPayment.find({ ...recentQuery, status: 'PAID' }).populate('paidBy', 'name role').populate('branch', 'name').sort({ paymentDate: -1, updatedAt: -1 }).limit(5),
+      Schedule.find(recentQuery).populate('teacher', 'name role').populate('branch', 'name').sort({ updatedAt: -1 }).limit(5),
     ]);
 
     const recentActionsRaw = [
       ...recentStudents.map(s => ({
         action: 'Added Student',
         user: 'Admin',
+        branch: s.branch?.name,
         at: s.createdAt,
       })),
       ...recentMarks.map(m => ({
         action: 'Marks Submitted',
         user: m.gradedBy?.name ? `Teacher ${m.gradedBy.name}` : 'Teacher',
+        branch: m.branch?.name,
         at: m.createdAt,
       })),
       ...recentExams.map(e => ({
         action: e.status === 'Published' ? 'Exam Published' : 'Exam Updated',
         user: 'Admin',
+        branch: e.branch?.name,
         at: e.updatedAt || e.createdAt,
       })),
       ...recentAttendance.map(a => ({
         action: 'Attendance Taken',
         user: a.markedBy?.name ? `${a.markedBy.role === 'teacher' ? 'Teacher' : 'Admin'} ${a.markedBy.name}` : 'Teacher',
+        branch: a.branch?.name,
         at: a.createdAt,
       })),
       ...recentPaid.map(p => ({
         action: 'Payment Marked Paid',
         user: p.paidBy?.name ? `Admin ${p.paidBy.name}` : 'Admin',
+        branch: p.branch?.name,
         at: p.paymentDate || p.updatedAt,
       })),
       ...recentSchedules.map(s => ({
         action: 'Schedule Updated',
         user: s.teacher?.name ? `Teacher ${s.teacher.name}` : 'Admin',
+        branch: s.branch?.name,
         at: s.updatedAt,
       })),
     ]
@@ -2415,8 +3759,28 @@ export const getDashboardStats = async (req, res) => {
         id: `${idx}-${new Date(x.at).getTime()}`,
         action: x.action,
         user: x.user,
+        branch: x.branch,
         datetime: new Date(x.at).toISOString(),
       }));
+
+    // Branch-wise stats (for School Admin consolidated view)
+    let branchStats = [];
+    if (req.user.role === 'schooladmin' && !branchId) {
+      const branches = await Branch.find({ tenant: schoolId, deletedAt: { $exists: false } });
+      branchStats = await Promise.all(branches.map(async (b) => {
+        const studentCount = await User.countDocuments({ role: 'student', branch: b._id, school: schoolId });
+        const teacherCount = await User.countDocuments({ role: 'teacher', branch: b._id, school: schoolId });
+        const revenue = (await MonthlyPayment.find({ branch: b._id, school: schoolId, status: 'PAID' }))
+          .reduce((sum, p) => sum + p.amount, 0);
+        
+        return {
+          name: b.name,
+          students: studentCount,
+          teachers: teacherCount,
+          revenue
+        };
+      }));
+    }
 
     res.json({
       totalStudents,
@@ -2434,6 +3798,7 @@ export const getDashboardStats = async (req, res) => {
       attendanceRate,
       classRanks: classRanksAgg,
       recentActions: recentActionsRaw,
+      branchStats // Only populated for school admin when no branch filter is active
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -2443,21 +3808,18 @@ export const getDashboardStats = async (req, res) => {
 // --- Teacher Dashboard Statistics ---
 export const getTeacherDashboardStats = async (req, res) => {
   const teacherId = req.user._id;
-  // Use user's school or fallback to detected tenant school
   const schoolId = req.user.school?._id || req.user.school || req.schoolId;
+  const branchId = req.branchId || req.user.branch;
 
   if (!schoolId) {
-    console.error(`Stats error: No school associated with teacher ${teacherId} and no tenant detected.`);
     return res.status(400).json({ message: 'Teacher is not associated with a school' });
   }
 
   try {
-    console.log(`Fetching stats for teacher ${teacherId} in school ${schoolId}`);
-    // Get all class-subject assignments for this teacher
-    let assignments = await ClassSubject.find({ 
-      teacher: teacherId, 
-      school: schoolId 
-    })
+    const query = { teacher: teacherId, school: schoolId };
+    if (branchId) query.branch = branchId;
+
+    let assignments = await ClassSubject.find(query)
     .populate('class', 'name section')
     .populate('subject', 'name code')
     .populate('teacher', 'name');
@@ -2582,11 +3944,13 @@ export const getSchedules = async (req, res) => {
     const { classId } = req.query;
     const filter = { school: req.user.school };
     if (classId) filter.class = classId;
+    if (req.branchId) filter.branch = req.branchId;
 
     const schedules = await Schedule.find(filter)
       .populate('class', 'name section')
       .populate('subject', 'name code')
       .populate('teacher', 'name')
+      .populate('branch', 'name')
       .sort({ day: 1, startTime: 1 });
 
     res.json(schedules);
@@ -2681,6 +4045,8 @@ export const createSchedule = async (req, res) => {
 
     const schedule = await Schedule.create({
       school: req.user.school,
+      branch: req.branchId || req.user.branch,
+      academicYear: req.academicYearName,
       class: classId,
       subject: subjectId,
       teacher: teacherId,
@@ -2806,36 +4172,60 @@ export const createPaymentMonth = async (req, res) => {
       assignTo,
       class: assignTo === 'CLASS' ? classId : null,
       school: schoolId,
+      branch: req.branchId || req.user.branch,
+      academicYear: year.toString(),
       createdBy: req.user._id,
     });
 
     // Find eligible students
     const query = { role: 'student', school: schoolId, status: 'active' };
     if (assignTo === 'CLASS' && classId) query.class = classId;
-    const students = await User.find(query).select('_id class monthlyFees');
+    const students = await User.find(query).select('_id class monthlyFees branch school').populate('class', 'name section');
 
     // Bulk-insert UNPAID records
-    const records = students.map(s => ({
-      paymentMonth: pm._id,
-      student: s._id,
-      class: s.class,
-      month,
-      year,
-      monthLabel: pm.monthLabel,
-      amount: s.monthlyFees || amount || 0, // Prefer student-specific fee, then month default
-      status: 'UNPAID',
-      school: schoolId,
+    const academicYear = year.toString();
+    const records = await Promise.all(students.map(async (s) => {
+      if (!s.branch) {
+        console.warn(`[createPaymentMonth] Student ${s._id} has no branch assigned.`);
+      }
+      const baseAmount = s.monthlyFees || amount || 0;
+      const feeCalculation = await calculateStudentMonthlyFee(
+        s,
+        baseAmount,
+        new Date(year, Math.max(0, MONTH_NAMES.indexOf(month)), 1)
+      );
+      return {
+        paymentMonth: pm._id,
+        student: s._id,
+        class: s.class,
+        month,
+        year,
+        monthLabel: pm.monthLabel,
+        amount: feeCalculation.finalAmount,
+        originalAmount: feeCalculation.originalAmount,
+        discountAmount: feeCalculation.discountAmount,
+        appliedDiscounts: feeCalculation.appliedDiscounts,
+        status: 'UNPAID',
+        school: schoolId,
+        branch: s.branch || req.branchId || req.user.branch, // Ensure branch is present
+        academicYear: academicYear,
+      };
     }));
 
-    await MonthlyPayment.insertMany(records, { ordered: false });
+    // Filter out any records that still don't have a branch (validation would fail)
+    const validRecords = records.filter(r => r.branch);
+
+    if (validRecords.length > 0) {
+      await MonthlyPayment.insertMany(validRecords, { ordered: false });
+    }
 
     // Update counts
-    pm.totalStudents = students.length;
-    pm.unpaidCount = students.length;
+    pm.totalStudents = validRecords.length;
+    pm.unpaidCount = validRecords.length;
     pm.paidCount = 0;
     await pm.save();
 
-    res.status(201).json({ paymentMonth: pm, created: records.length });
+    res.status(201).json({ paymentMonth: pm, created: validRecords.length, skipped: records.length - validRecords.length });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -2847,10 +4237,39 @@ export const createPaymentMonth = async (req, res) => {
  */
 export const getPaymentMonths = async (req, res) => {
   try {
-    const months = await PaymentMonth.find({ school: req.user.school })
+    const { classId, status } = req.query;
+    const query = { school: req.user.school };
+    if (req.branchId) query.branch = req.branchId;
+
+    const months = await PaymentMonth.find(query)
       .populate('class', 'name section')
       .sort({ year: -1, createdAt: -1 });
-    res.json(months);
+
+    // If no filters, return default static counts
+    if ((!classId || classId === 'All Classes') && (!status || status === 'All Status')) {
+      return res.json(months);
+    }
+
+    // Dynamic stats based on filters
+    const filteredMonths = await Promise.all(months.map(async (pm) => {
+      const baseFilter = { paymentMonth: pm._id, school: req.user.school };
+      if (classId && classId !== 'All Classes') baseFilter.class = classId;
+      if (req.branchId) baseFilter.branch = req.branchId;
+      
+      const total = await MonthlyPayment.countDocuments(baseFilter);
+      const paid = await MonthlyPayment.countDocuments({ ...baseFilter, status: 'PAID' });
+      const unpaid = await MonthlyPayment.countDocuments({ ...baseFilter, status: 'UNPAID' });
+
+      const doc = pm.toObject();
+      return {
+        ...doc,
+        totalStudents: total,
+        paidCount: paid,
+        unpaidCount: unpaid,
+      };
+    }));
+
+    res.json(filteredMonths);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -2863,24 +4282,25 @@ export const getPaymentMonths = async (req, res) => {
 export const getMonthlyPayments = async (req, res) => {
   const { month, year, classId, status, startDate, endDate } = req.query;
   try {
-    const filter = { school: req.user.school };
+    const filter = { school: req.user.school?._id || req.user.school };
+    if (req.branchId) filter.branch = req.branchId;
     
     // Normalize and validate month
-    if (month && month !== 'undefined' && month !== 'null' && month !== '') {
+    if (month && month !== 'undefined' && month !== 'null' && month !== '' && month !== 'all') {
       // Ensure month is capitalized (e.g., "april" -> "April") to match DB storage
       filter.month = month.charAt(0).toUpperCase() + month.slice(1).toLowerCase();
     }
     
     // Normalize and validate year
-    if (year && year !== 'undefined' && year !== 'null' && year !== '') {
+    if (year && year !== 'undefined' && year !== 'null' && year !== '' && year !== 'all') {
       filter.year = Number(year);
     }
     
-    if (classId && classId !== 'undefined' && classId !== 'null' && classId !== '') {
+    if (classId && classId !== 'undefined' && classId !== 'null' && classId !== '' && classId !== 'all') {
       filter.class = classId;
     }
 
-    if (status && status !== 'undefined' && status !== 'null' && status !== '') {
+    if (status && status !== 'undefined' && status !== 'null' && status !== '' && status !== 'all') {
       // API uses PAID/UNPAID based on schema enum
       filter.status = status.toUpperCase();
     }
@@ -2924,11 +4344,32 @@ export const markPaymentPaid = async (req, res) => {
       });
     }
 
+    const oldValue = {
+      status: mp.status,
+      paymentDate: mp.paymentDate,
+      remarks: mp.remarks,
+      paidBy: mp.paidBy,
+    };
+
     mp.status = 'PAID';
     mp.paymentDate = new Date();
     mp.paidBy = req.user._id;
     mp.remarks = remarks;
     await mp.save();
+
+    logFinanceAction(req, {
+      action: 'PAYMENT_MARK_PAID',
+      targetId: mp._id,
+      oldValue,
+      newValue: {
+        status: mp.status,
+        paymentDate: mp.paymentDate,
+        remarks: mp.remarks,
+        paidBy: mp.paidBy,
+      },
+      academicYear: mp.academicYear,
+      metadata: { studentId: mp.student?._id, studentName: mp.student?.name },
+    });
 
     // Refresh counts on the PaymentMonth config
     const paidCount = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'PAID', school: req.user.school });
@@ -2958,11 +4399,31 @@ export const markPaymentUnpaid = async (req, res) => {
     const mp = await MonthlyPayment.findOne({ _id: id, school: req.user.school });
     if (!mp) return res.status(404).json({ message: 'Payment record not found.' });
 
+    const oldValue = {
+      status: mp.status,
+      paymentDate: mp.paymentDate,
+      remarks: mp.remarks,
+      paidBy: mp.paidBy,
+    };
+
     mp.status = 'UNPAID';
     mp.paymentDate = null;
     mp.paidBy = null;
     mp.remarks = '';
     await mp.save();
+
+    logFinanceAction(req, {
+      action: 'PAYMENT_MARK_UNPAID',
+      targetId: mp._id,
+      oldValue,
+      newValue: {
+        status: mp.status,
+        paymentDate: mp.paymentDate,
+        remarks: mp.remarks,
+        paidBy: mp.paidBy,
+      },
+      academicYear: mp.academicYear,
+    });
 
     const paidCount = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'PAID', school: req.user.school });
     const unpaidCount = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'UNPAID', school: req.user.school });
@@ -2987,9 +4448,35 @@ export const markPaymentUnpaid = async (req, res) => {
  */
 export const generateMonthlyPaymentsManual = async (req, res) => {
   try {
-    const { month, year } = req.body;
+    const { month, year, branchId } = req.body;
     const { generateMonthlyPayments } = await import('../services/paymentScheduler.js');
-    const result = await generateMonthlyPayments(req.user.school, month, year);
+    const schoolId = req.user.school?._id || req.user.school;
+    
+    // Academic Year requirement check
+    const academicYear = req.academicYearId || req.academicYearName;
+    if (!academicYear) {
+      return res.status(400).json({
+        message: 'Academic Year is required',
+        userMessage: 'Please select an active academic year to generate payments.'
+      });
+    }
+
+    // Branch resolution logic
+    let targetBranchId = req.branchId; // from middleware (for branch managers)
+    if (!targetBranchId) { // if school admin (req.branchId is null)
+      if (branchId === 'ALL') {
+        targetBranchId = null; // Generate for all branches
+      } else if (branchId) {
+        targetBranchId = branchId; // Generate for specific selected branch
+      } else {
+        // Default to main branch if none selected
+        const Branch = (await import('../models/Branch.js')).default;
+        const mainBranch = await Branch.findOne({ tenant: schoolId, status: 'active', $or: [{ name: 'Main Branch' }, { code: 'MAIN' }] });
+        targetBranchId = mainBranch ? mainBranch._id.toString() : null;
+      }
+    }
+
+    const result = await generateMonthlyPayments(schoolId, month, year, targetBranchId, academicYear);
     
     res.json({
       message: 'Monthly payments generated',
@@ -3038,6 +4525,8 @@ export const getPaymentStats = async (req, res) => {
       school: schoolId
     };
 
+    if (req.branchId) filter.branch = req.branchId;
+
     if (classId && classId !== 'undefined' && classId !== 'null' && classId !== '') {
       filter.class = classId;
     }
@@ -3078,19 +4567,27 @@ export const getPaymentStats = async (req, res) => {
 export const getPaymentMatrix = async (req, res) => {
   const { classId } = req.query;
   const schoolId = req.user.school;
+  const branchId = req.branchId;
   try {
     const studentFilter = { role: 'student', school: schoolId };
     if (classId) studentFilter.class = classId;
+    if (branchId) studentFilter.branch = branchId;
+    
     const students = await User.find(studentFilter).populate('class', 'name section');
 
-    const months = await PaymentMonth.find({ school: schoolId })
+    const monthFilter = { school: schoolId };
+    if (branchId) monthFilter.branch = branchId;
+    const months = await PaymentMonth.find(monthFilter)
       .sort({ year: 1, createdAt: 1 });
 
     const studentIds = students.map(s => s._id);
-    const allPayments = await MonthlyPayment.find({
+    const paymentFilter = {
       school: schoolId,
       student: { $in: studentIds },
-    });
+    };
+    if (branchId) paymentFilter.branch = branchId;
+
+    const allPayments = await MonthlyPayment.find(paymentFilter);
 
     // Build lookup: studentId → monthLabel → payment
     const lookup = {};
@@ -3399,9 +4896,18 @@ export const getSchoolSettings = async (req, res) => {
     if (!req.user.school) {
       return res.status(404).json({ message: 'No school linked to your admin account.' });
     }
-    const school = await School.findById(req.user.school);
+    const school = await School.findById(req.user.school).populate('subscription.plan');
     if (!school) return res.status(404).json({ message: 'School not found.' });
-    res.json(school);
+    
+    // Get feature overrides
+    const featureOverrides = await SchoolFeatureOverride.find({ school: school._id });
+    const enabledFeatures = await getEnabledFeaturesForSchool(school._id);
+    
+    res.json({
+      ...school.toObject(),
+      featureOverrides,
+      enabledFeatures
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -3413,7 +4919,17 @@ export const getSchoolSettings = async (req, res) => {
  * Body: { name?, address?, phone?, email?, merchantNumber? }
  */
 export const updateSchoolSettings = async (req, res) => {
-  const { name, logo, address, phone, email, merchantNumber } = req.body;
+  const {
+    name,
+    logo,
+    motto,
+    address,
+    phone,
+    email,
+    website,
+    merchantNumber,
+    settings,
+  } = req.body;
   try {
     if (!req.user.school) {
       return res.status(404).json({ message: 'No school linked to your admin account.' });
@@ -3428,10 +4944,22 @@ export const updateSchoolSettings = async (req, res) => {
       }
       school.logo = logo;
     }
+    if (motto          !== undefined) school.motto          = motto;
     if (address        !== undefined) school.address        = address;
     if (phone          !== undefined) school.phone          = phone;
     if (email          !== undefined) school.email          = email;
+    if (website        !== undefined) school.website        = website;
     if (merchantNumber !== undefined) school.merchantNumber = merchantNumber;
+    if (settings       !== undefined) {
+      school.settings = {
+        ...(school.settings?.toObject?.() || school.settings || {}),
+        ...settings,
+        academicYearSettings: {
+          ...(school.settings?.academicYearSettings || {}),
+          ...(settings?.academicYearSettings || {}),
+        },
+      };
+    }
 
     await school.save();
     res.json({ message: 'School settings updated successfully.', school });
@@ -3446,37 +4974,104 @@ export const updateSchoolSettings = async (req, res) => {
  * PUT /admin/teachers/:id/reset-password
  * Admin resets a teacher's password
  */
-export const resetTeacherPassword = async (req, res) => {
+const generateTemporaryPassword = () => {
+  const token = crypto.randomBytes(5).toString('base64url');
+  return `Dugsi${token}7`;
+};
+
+const validateAccountPassword = (password) => {
+  if (!password || password.length < 8) return 'Password must be at least 8 characters long';
+  if (!/[a-zA-Z]/.test(password)) return 'Password must contain at least one letter';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
+  return null;
+};
+
+const resetScopedUserPassword = async (req, res, role, label) => {
   const { id } = req.params;
-  const { newPassword } = req.body;
+  const { newPassword, generateRandom = false } = req.body;
 
   try {
-    if (!newPassword || newPassword.length < 6) {
+    const password = generateRandom ? generateTemporaryPassword() : newPassword;
+    const validationError = validateAccountPassword(password);
+    if (validationError) {
       return res.status(400).json({
-        message: 'Password must be at least 6 characters long',
-        userMessage: 'Password must be at least 6 characters long.'
+        message: validationError,
+        userMessage: `${validationError}.`
       });
     }
 
-    const teacher = await User.findOne({ 
-      _id: id, 
-      role: 'teacher',
-      school: req.user.school 
+    const schoolId = req.user.school?._id || req.user.school;
+    const query = {
+      _id: id,
+      role,
+      school: schoolId,
+      isDeleted: { $ne: true },
+      deletedAt: { $exists: false }
+    };
+    if (req.branchId) query.branch = req.branchId;
+
+    const account = await User.findOne(query);
+    if (!account) {
+      return res.status(404).json({
+        message: `${label} not found`,
+        userMessage: `${label} not found in your school or branch.`
+      });
+    }
+
+    account.password = password;
+    account.credentialsGenerated = true;
+    account.tokenVersion = (account.tokenVersion || 0) + 1;
+    await account.save();
+
+    await sendNotification({
+      recipientId: account._id,
+      schoolId,
+      branchId: account.branch || req.branchId,
+      title: 'Password Reset',
+      message: 'Your DugsiHub password was reset by an authorized administrator.',
+      type: 'security',
+      priority: 'high',
+      metadata: {
+        action: 'PASSWORD_RESET',
+        role,
+        resetBy: req.user._id
+      },
+      emailData: account.email ? {
+        to: account.email,
+        subject: 'Your DugsiHub password was reset',
+        html: `
+          <p>Hello ${account.name},</p>
+          <p>Your DugsiHub account password was reset by your school administrator.</p>
+          <p><strong>Username:</strong> ${account.customId || account.email || account.phone || 'Your registered login'}</p>
+          <p><strong>Temporary password:</strong> ${password}</p>
+          <p>Please sign in and change this password if your portal supports password changes.</p>
+        `
+      } : null,
+      smsData: role === 'parent' && account.phone ? {
+        to: account.phone,
+        body: `DugsiHub password reset. Username: ${account.customId || account.email || account.phone}. Password: ${password}`
+      } : null
     });
 
-    if (!teacher) {
-      return res.status(404).json({
-        message: 'Teacher not found',
-        userMessage: 'Teacher not found in your school.'
-      });
-    }
-
-    teacher.password = newPassword;
-    await teacher.save();
+    logAction(req, {
+      action: `${role.toUpperCase()}_PASSWORD_RESET`,
+      module: 'ACCOUNT_SECURITY',
+      targetId: account._id,
+      details: {
+        role,
+        customId: account.customId,
+        emailSent: Boolean(account.email),
+        smsQueued: role === 'parent' && Boolean(account.phone),
+        generatedRandom: Boolean(generateRandom),
+        branch: account.branch,
+        school: schoolId
+      }
+    });
 
     res.json({
-      message: 'Teacher password reset successfully',
-      userMessage: `Password for ${teacher.name} has been reset successfully.`
+      message: `${label} password reset successfully`,
+      userMessage: `Password for ${account.name} has been reset successfully.`,
+      generatedPassword: generateRandom ? password : undefined
     });
   } catch (error) {
     res.status(500).json({
@@ -3486,6 +5081,8 @@ export const resetTeacherPassword = async (req, res) => {
   }
 };
 
+export const resetTeacherPassword = (req, res) => resetScopedUserPassword(req, res, 'teacher', 'Teacher');
+
 /**
  * PUT /admin/students/:id/reset-password
  * Admin resets a student's password
@@ -3494,57 +5091,8 @@ export const resetTeacherPassword = async (req, res) => {
  * PUT /admin/students/:id/reset-password
  * Admin resets a student's password
  */
-export const resetStudentPassword = async (req, res) => {
-  const { id } = req.params;
-  const { newPassword } = req.body;
-
-  try {
-    if (!newPassword || newPassword.length < 8) {
-      return res.status(400).json({
-        message: 'Password must be at least 8 characters long',
-        userMessage: 'Password must be at least 8 characters long.'
-      });
-    }
-    if (!/[a-zA-Z]/.test(newPassword)) {
-      return res.status(400).json({
-        message: 'Password must contain at least one letter',
-        userMessage: 'Password must contain at least one letter.'
-      });
-    }
-    if (!/[0-9]/.test(newPassword)) {
-      return res.status(400).json({
-        message: 'Password must contain at least one number',
-        userMessage: 'Password must contain at least one number.'
-      });
-    }
-
-    const student = await User.findOne({ 
-      _id: id, 
-      role: 'student',
-      school: req.user.school 
-    });
-
-    if (!student) {
-      return res.status(404).json({
-        message: 'Student not found',
-        userMessage: 'Student not found in your school.'
-      });
-    }
-
-    student.password = newPassword;
-    await student.save();
-
-    res.json({
-      message: 'Student password reset successfully',
-      userMessage: `Password for ${student.name} has been reset successfully.`
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: error.message,
-      userMessage: 'Failed to reset password. Please try again.'
-    });
-  }
-};
+export const resetStudentPassword = (req, res) => resetScopedUserPassword(req, res, 'student', 'Student');
+export const resetParentPassword = (req, res) => resetScopedUserPassword(req, res, 'parent', 'Parent');
 
 // --- Announcement Management ---
 import Announcement from '../models/Announcement.js';
@@ -3596,6 +5144,32 @@ export const createAnnouncement = async (req, res) => {
     const populated = await Announcement.findById(announcement._id)
       .populate('createdBy', 'name role')
       .populate('targetClass', 'name section');
+
+    // Notify relevant users (in-app)
+    const audienceQuery = {
+      school: req.user.school,
+      deletedAt: { $exists: false },
+      status: 'active',
+    };
+    if (audience === 'students') audienceQuery.role = 'student';
+    else if (audience === 'teachers') audienceQuery.role = 'teacher';
+    else if (audience === 'parents') audienceQuery.role = 'parent';
+    else if (audience === 'class' && targetClass) {
+      audienceQuery.role = 'student';
+      audienceQuery.class = targetClass;
+    }
+
+    const recipients = await User.find(audienceQuery).select('_id branch').limit(500);
+    if (recipients.length) {
+      await broadcastNotification({
+        recipientIds: recipients.map((r) => r._id),
+        schoolId: req.user.school,
+        branchId: req.branchId || recipients[0]?.branch,
+        title: `New Announcement: ${announcement.title}`,
+        message: announcement.content.slice(0, 180),
+        type: 'announcement',
+      });
+    }
 
     res.status(201).json({
       message: 'Announcement created successfully',
@@ -3676,3 +5250,297 @@ export const deleteAnnouncement = async (req, res) => {
   }
 };
 
+// --- Asset CRUD Additions ---
+export const updateAsset = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const asset = await Asset.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      { ...req.body, updatedAt: new Date() },
+      { new: true }
+    ).populate('assignedTo', 'name');
+    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    res.json(asset);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteAsset = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const asset = await Asset.findOneAndDelete({ _id: id, school: schoolId });
+    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    res.json({ message: 'Asset deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Library CRUD Additions ---
+export const updateLibraryBook = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const book = await LibraryBook.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      req.body,
+      { new: true }
+    );
+    if (!book) return res.status(404).json({ message: 'Book not found' });
+    res.json(book);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteLibraryBook = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const book = await LibraryBook.findOneAndDelete({ _id: id, school: schoolId });
+    if (!book) return res.status(404).json({ message: 'Book not found' });
+    res.json({ message: 'Book deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Transport CRUD Additions ---
+export const updateTransportRoute = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const route = await TransportRoute.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      req.body,
+      { new: true }
+    );
+    if (!route) return res.status(404).json({ message: 'Route not found' });
+    res.json(route);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteTransportRoute = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const route = await TransportRoute.findOneAndDelete({ _id: id, school: schoolId });
+    if (!route) return res.status(404).json({ message: 'Route not found' });
+    res.json({ message: 'Route deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateTransportVehicle = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const vehicle = await TransportVehicle.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      req.body,
+      { new: true }
+    );
+    if (!vehicle) return res.status(404).json({ message: 'Vehicle not found' });
+    res.json(vehicle);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteTransportVehicle = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const vehicle = await TransportVehicle.findOneAndDelete({ _id: id, school: schoolId });
+    if (!vehicle) return res.status(404).json({ message: 'Vehicle not found' });
+    res.json({ message: 'Vehicle deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Certificate CRUD Additions ---
+export const getCertificates = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+    const query = { school: schoolId };
+    if (branchId) query.branch = branchId;
+    const certificates = await Certificate.find(query)
+      .populate('student', 'name customId class')
+      .populate('issuedBy', 'name')
+      .sort({ createdAt: -1 });
+    res.json(certificates);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateCertificate = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const cert = await Certificate.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      req.body,
+      { new: true }
+    ).populate('student', 'name customId');
+    if (!cert) return res.status(404).json({ message: 'Certificate not found' });
+    res.json(cert);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteCertificate = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const cert = await Certificate.findOneAndDelete({ _id: id, school: schoolId });
+    if (!cert) return res.status(404).json({ message: 'Certificate not found' });
+    res.json({ message: 'Certificate deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Hostel Management ---
+export const getHostels = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+    const query = { school: schoolId, deletedAt: { $exists: false } };
+    if (branchId) query.branch = branchId;
+    const hostels = await Hostel.find(query).sort({ createdAt: -1 });
+    // Get room counts for each hostel
+    const hostelIds = hostels.map(h => h._id);
+    const rooms = await HostelRoom.find({ hostel: { $in: hostelIds }, deletedAt: { $exists: false } });
+    const hostelData = hostels.map(h => {
+      const hostelRooms = rooms.filter(r => r.hostel.toString() === h._id.toString());
+      return {
+        ...h.toObject(),
+        totalRooms: hostelRooms.length,
+        totalCapacity: hostelRooms.reduce((s, r) => s + r.capacity, 0),
+        availableBeds: hostelRooms.reduce((s, r) => s + r.availableBeds, 0)
+      };
+    });
+    res.json(hostelData);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createHostel = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+    const hostel = await Hostel.create({
+      ...req.body,
+      school: schoolId,
+      branch: branchId,
+      createdBy: req.user._id
+    });
+    res.status(201).json(hostel);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateHostel = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const hostel = await Hostel.findOneAndUpdate(
+      { _id: id, school: schoolId, deletedAt: { $exists: false } },
+      { ...req.body, updatedBy: req.user._id },
+      { new: true }
+    );
+    if (!hostel) return res.status(404).json({ message: 'Hostel not found' });
+    res.json(hostel);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteHostel = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const hostel = await Hostel.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      { deletedAt: new Date(), deletedBy: req.user._id },
+      { new: true }
+    );
+    if (!hostel) return res.status(404).json({ message: 'Hostel not found' });
+    res.json({ message: 'Hostel deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getHostelRooms = async (req, res) => {
+  const { hostelId } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const rooms = await HostelRoom.find({ hostel: hostelId, school: schoolId, deletedAt: { $exists: false } })
+      .sort({ roomNumber: 1 });
+    res.json(rooms);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createHostelRoom = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+    const room = await HostelRoom.create({
+      ...req.body,
+      school: schoolId,
+      branch: branchId,
+      availableBeds: req.body.capacity,
+      createdBy: req.user._id
+    });
+    res.status(201).json(room);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateHostelRoom = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const room = await HostelRoom.findOneAndUpdate(
+      { _id: id, school: schoolId, deletedAt: { $exists: false } },
+      { ...req.body, updatedBy: req.user._id },
+      { new: true }
+    );
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+    res.json(room);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteHostelRoom = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const room = await HostelRoom.findOneAndUpdate(
+      { _id: id, school: schoolId },
+      { deletedAt: new Date(), deletedBy: req.user._id },
+      { new: true }
+    );
+    if (!room) return res.status(404).json({ message: 'Room not found' });
+    res.json({ message: 'Room deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

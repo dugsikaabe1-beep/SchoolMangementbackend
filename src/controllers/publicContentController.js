@@ -2,6 +2,8 @@ import asyncHandler from 'express-async-handler';
 import SchoolHome from '../models/SchoolHome.js';
 import SchoolAbout from '../models/SchoolAbout.js';
 import SchoolEvent from '../models/SchoolEvent.js';
+import User from '../models/User.js';
+import { broadcastNotification } from '../utils/notificationService.js';
 import School from '../models/School.js';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import fs from 'fs';
@@ -164,6 +166,18 @@ export const createEvent = asyncHandler(async (req, res) => {
     image,
     type
   });
+
+  // Notify all users in the school about the new event
+  const recipients = await User.find({ school: schoolId, status: 'active' }).select('_id');
+  if (recipients.length > 0) {
+    await broadcastNotification({
+      recipientIds: recipients.map(r => r._id),
+      schoolId,
+      title: `📅 New School Event: ${title}`,
+      message: `A new event "${title}" has been scheduled for ${new Date(date).toLocaleDateString()}.`,
+      type: 'announcement'
+    });
+  }
 
   res.status(201).json({
     message: 'Event created successfully',

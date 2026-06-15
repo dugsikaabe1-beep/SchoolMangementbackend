@@ -4,6 +4,8 @@ import MonthlyPayment from '../models/MonthlyPayment.js';
 import PaymentMonth from '../models/PaymentMonth.js';
 import User from '../models/User.js';
 import School from '../models/School.js';
+import { sendNotification } from '../utils/notificationService.js';
+import { calculateStudentMonthlyFee } from '../utils/discountUtils.js';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -20,13 +22,14 @@ const getMonthName = (date) => {
   return date.toLocaleString('default', { month: 'long' });
 };
 
-const generateMonthlyPayments = async (schoolId, month, year) => {
+const generateMonthlyPayments = async (schoolId, month, year, branchId = null, academicYear = null) => {
   const now = new Date();
   const targetMonth = month || getMonthName(now);
   const targetYear = year || now.getFullYear();
   const monthLabel = `${targetMonth} ${targetYear}`;
+  const targetAcademicYear = academicYear || targetYear.toString();
 
-  console.log(`[PaymentScheduler] Generating payments for ${monthLabel} - School: ${schoolId}`);
+  console.log(`[PaymentScheduler] Generating payments for ${monthLabel} - School: ${schoolId}, Branch: ${branchId || 'ALL'}`);
 
   try {
     if (!schoolId) {
@@ -35,11 +38,18 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
 
     // 1. Get all students in the school regardless of enrollment date
     // This allows charging for past months even for new students as requested by user
-    const schoolStudents = await User.find({
+    const studentQuery = {
       role: 'student',
       school: schoolId,
       status: 'active'
-    }).select('_id class name customId monthlyFees enrollmentDate');
+    };
+    
+    // If a specific branch is selected, filter by it
+    if (branchId) {
+      studentQuery.branch = branchId;
+    }
+
+    const schoolStudents = await User.find(studentQuery).select('_id class name customId monthlyFees enrollmentDate branch school email currency').populate('class', 'name section');
 
     console.log(`[PaymentScheduler] Total active students found: ${schoolStudents.length}`);
 
@@ -49,11 +59,6 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
     const lastDayOfTargetMonth = new Date(targetYear, monthIndex + 1, 0, 23, 59, 59);
     
     const eligibleStudents = schoolStudents.filter(student => {
-      // If student enrolled after the end of the target month, they might not be eligible
-      // BUT the user specifically asked to be able to charge for any month
-      // So we'll be more lenient. If it's a manual trigger (month/year provided), 
-      // we'll charge them anyway if they are active now.
-      
       if (month && year) {
         // Manual trigger - be lenient as per user request
         return true;
@@ -71,12 +76,18 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
     console.log(`[PaymentScheduler] Eligible students for ${monthLabel}: ${eligibleStudents.length}`);
 
     // 3. Get or create PaymentMonth for this month
-    let paymentMonth = await PaymentMonth.findOne({
+    const paymentMonthQuery = {
       month: targetMonth,
       year: targetYear,
       school: schoolId,
       assignTo: 'ALL',
-    });
+    };
+    
+    if (branchId) {
+      paymentMonthQuery.branch = branchId;
+    }
+
+    let paymentMonth = await PaymentMonth.findOne(paymentMonthQuery);
 
     if (!paymentMonth) {
       paymentMonth = await PaymentMonth.create({
@@ -86,6 +97,8 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
         amount: 0, // This is a placeholder, actual amounts are per-student
         assignTo: 'ALL',
         school: schoolId,
+        branch: branchId || undefined,
+        academicYear: targetAcademicYear,
       });
     }
 
@@ -98,8 +111,9 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
     for (const student of eligibleStudents) {
       // Check if payment already exists
       const existingPayment = await MonthlyPayment.findOne({
-        paymentMonth: paymentMonth._id,
         student: student._id,
+        month: targetMonth,
+        year: targetYear,
         school: schoolId,
       });
 
@@ -108,7 +122,30 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
         continue;
       }
 
-      const feeAmount = student.monthlyFees || 0;
+      const baseAmount = student.monthlyFees || 0;
+      const feeCalculation = await calculateStudentMonthlyFee(
+        student,
+        baseAmount,
+        new Date(targetYear, Math.max(0, monthIndex), 1)
+      );
+      const feeAmount = feeCalculation.finalAmount;
+      const academicYear = targetYear.toString();
+      
+      // Critical fix: ensure we have a valid branch ID for the student
+      let finalBranchId = student.branch;
+      
+      if (!finalBranchId) {
+        // If student has no branch, try to get the first active branch of the school
+        const Branch = mongoose.model('Branch');
+        const firstBranch = await Branch.findOne({ tenant: schoolId, status: 'active' });
+        finalBranchId = firstBranch?._id;
+      }
+
+      if (!finalBranchId) {
+        console.warn(`[PaymentScheduler] Skipping student ${student.name} (${student._id}) - No branch found for school ${schoolId}`);
+        skippedCount++;
+        continue;
+      }
 
       paymentRecords.push({
         paymentMonth: paymentMonth._id,
@@ -118,8 +155,13 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
         year: targetYear,
         monthLabel,
         amount: feeAmount,
+        originalAmount: feeCalculation.originalAmount,
+        discountAmount: feeCalculation.discountAmount,
+        appliedDiscounts: feeCalculation.appliedDiscounts,
         status: 'UNPAID',
         school: schoolId,
+        branch: finalBranchId,
+        academicYear: academicYear,
       });
       
       createdCount++;
@@ -127,6 +169,45 @@ const generateMonthlyPayments = async (schoolId, month, year) => {
 
     if (paymentRecords.length > 0) {
       await MonthlyPayment.insertMany(paymentRecords, { ordered: false });
+      
+      // Notify Students & Parents
+      for (const student of eligibleStudents) {
+        const calculation = await calculateStudentMonthlyFee(
+          student,
+          student.monthlyFees || 0,
+          new Date(targetYear, Math.max(0, monthIndex), 1)
+        );
+        const amount = calculation.finalAmount;
+        if (amount > 0) {
+          const title = 'School Fee Generated';
+          const message = `Monthly school fee for ${monthLabel} has been generated: ${amount} ${student.currency || 'USD'}.`;
+          
+          // Notify Student
+          await sendNotification({
+            recipientId: student._id,
+            schoolId,
+            branchId: student.branch,
+            title,
+            message,
+            type: 'finance',
+            emailData: student.email ? { to: student.email, subject: title, html: `<p>${message}</p>` } : null
+          });
+
+          // Notify Parent (Standalone Account)
+          const parents = await User.find({ role: 'parent', linkedStudents: student._id, school: schoolId });
+          for (const parent of parents) {
+            await sendNotification({
+              recipientId: parent._id,
+              schoolId,
+              branchId: parent.branch,
+              title: `Fee Generated: ${student.name}`,
+              message: `Monthly school fee for ${student.name} (${monthLabel}) has been generated: ${amount} ${student.currency || 'USD'}.`,
+              type: 'finance',
+              emailData: parent.email ? { to: parent.email, subject: title, html: `<p>${message}</p>` } : null
+            });
+          }
+        }
+      }
     }
 
     // 5. Update PaymentMonth stats accurately

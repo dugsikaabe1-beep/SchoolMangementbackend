@@ -37,13 +37,24 @@ const announcementSchema = new mongoose.Schema(
     school: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'School', 
-      required: true 
+      required: true,
+      index: true 
+    },
+    branch: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Branch', 
+      required: true,
+      index: true 
     },
     createdBy: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'User', 
       required: true 
     },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     expiresAt: { type: Date },
     media: { type: cloudinaryAssetSchema },
   },
@@ -55,8 +66,8 @@ const announcementSchema = new mongoose.Schema(
 );
 
 // Index for efficient queries
-announcementSchema.index({ school: 1, status: 1, createdAt: -1 });
-announcementSchema.index({ school: 1, audience: 1 });
+announcementSchema.index({ school: 1, branch: 1, status: 1, createdAt: -1 });
+announcementSchema.index({ school: 1, branch: 1, audience: 1 });
 
 const Announcement = mongoose.model('Announcement', announcementSchema);
 export default Announcement;

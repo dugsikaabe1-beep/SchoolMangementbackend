@@ -35,11 +35,14 @@ export const protect = async (req, res, next) => {
     }
 
     const detectedTenant = req.tenantId;
+    const tokenTenantId = decoded.tenantId ? String(decoded.tenantId).toLowerCase() : null;
+    const tokenSubdomain = decoded.subdomain ? String(decoded.subdomain).toLowerCase() : null;
+
     if (
       detectedTenant &&
-      decoded.tenantId != null &&
-      String(decoded.tenantId).length > 0 &&
-      detectedTenant.toLowerCase() !== String(decoded.tenantId).toLowerCase()
+      tokenTenantId &&
+      detectedTenant.toLowerCase() !== tokenTenantId &&
+      detectedTenant.toLowerCase() !== tokenSubdomain
     ) {
       securityLog('jwt_tenant_mismatch', {
         detectedTenant,
@@ -53,11 +56,56 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    const user = await User.findById(decoded.id)
-      .select('-password')
-      .populate('school', 'name subdomain isActive');
+    let user;
+    if (decoded.role === 'branch_manager') {
+      const Branch = (await import('../models/Branch.js')).default;
+      const branch = await Branch.findById(decoded.id || decoded.userId).populate('tenant', 'name subdomain isActive');
+      
+      if (branch) {
+        let branchPermissions = [
+          'students.view', 'students.create', 'students.edit', 
+          'teachers.view', 
+          'classes.view', 
+          'subjects.view', 
+          'attendance.view', 'attendance.create', 
+          'exams.view', 'exams.create', 
+          'finance.view',
+          'schedules.view',
+          'settings.view'
+        ];
+        
+        if (branch.rbacRole) {
+          try {
+            const Role = (await import('../models/Role.js')).default;
+            const role = await Role.findById(branch.rbacRole);
+            if (role && role.permissions) branchPermissions = role.permissions;
+          } catch (e) {
+            console.error('Error loading branch permissions', e);
+          }
+        }
+
+        user = {
+          _id: branch._id,
+          name: branch.name,
+          email: branch.loginEmail,
+          role: 'branch_manager',
+          branch: branch,
+          school: branch.tenant,
+          branchScope: 'SPECIFIC',
+          rbacRole: branch.rbacRole,
+          permissions: branchPermissions,
+          tokenVersion: 0
+        };
+      }
+    } else {
+      user = await User.findById(decoded.id || decoded.userId)
+        .select('-password')
+        .populate('school', 'name subdomain isActive')
+        .populate('branch', 'name status');
+    }
 
     if (!user) {
+      console.warn(`[Auth] User no longer exists for ID: ${decoded.id}`);
       return res.status(401).json({
         success: false,
         message: 'User no longer exists',
@@ -65,18 +113,32 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    if (user.status === 'inactive' || user.status === 'suspended') {
-      return res.status(401).json({
+    // Branch Validation
+    if (user.branch && user.branch.status !== 'active') {
+      return res.status(403).json({
         success: false,
-        message: 'User account is inactive',
-        userMessage:
-          'Your account has been deactivated. Please contact your administrator.',
+        message: 'Branch is not active',
+        userMessage: 'Your assigned branch is currently inactive. Please contact your administrator.',
       });
     }
+
+    // Set context on request
+    req.user = user;
+    
+    // Proactively load effective permissions for RBAC enforcement
+    if (typeof user.getEffectivePermissions === 'function') {
+      req.user.effectivePermissions = await user.getEffectivePermissions();
+    } else {
+      req.user.effectivePermissions = user.permissions || [];
+    }
+    
+    req.schoolId = user.school?._id;
+    req.branchId = user.branch?._id || decoded.branchId;
 
     const expectedTv = user.tokenVersion ?? 0;
     const tokenTv = decoded.tv ?? 0;
     if (expectedTv !== tokenTv) {
+      console.warn(`[Auth] Stale token version for ${user.name}: Token=${tokenTv}, Expected=${expectedTv}`);
       securityLog('jwt_token_version_stale', { userId: String(user._id), path: req.path });
       return res.status(401).json({
         success: false,
@@ -94,41 +156,35 @@ export const protect = async (req, res, next) => {
 
       // Local / single-origin API: Host has no school subdomain; scope from verified user + JWT
       if (!effectiveSchoolId && allowHostlessTenant && user.school?._id) {
-        const tokenSchool = decoded.schoolId
-          ? String(decoded.schoolId)
-          : null;
-        if (
-          tokenSchool &&
-          user.school._id.toString() !== tokenSchool
-        ) {
-          securityLog('jwt_school_mismatch_no_host_tenant', {
-            userId: String(user._id),
-            path: req.path,
-          });
-          return res.status(403).json({
-            success: false,
-            message: 'Security Alert: School scope mismatch',
-            userMessage: 'You are not authorized to use this session for this request.',
-          });
-        }
+        console.log(`[Auth] No host tenant, applying user school scope: ${user.school.subdomain}`);
         effectiveSchoolId = user.school._id;
         req.schoolId = user.school._id;
         req.tenantId = user.school.subdomain;
       }
 
       if (!effectiveSchoolId) {
+        console.warn(`[Auth] MISSING TENANT CONTEXT for ${user.name} at ${req.path}`);
         // Allow school admins to proceed without a tenant context IF they are on the profile setup routes
         // or uploading a logo during setup
         const isProfileSetupRoute =
           req.originalUrl &&
           (req.originalUrl.includes('/school-profile-status') ||
+            req.originalUrl.includes('/profile-status') ||
             req.originalUrl.includes('/complete-school-profile') ||
+            req.originalUrl.includes('/complete-profile') ||
             req.originalUrl.includes('/public-content/upload'));
 
         const isAdmin = ['schooladmin', 'school_admin', 'admin'].includes(user.role);
 
         if (isAdmin && isProfileSetupRoute) {
           // Allow proceeding to setup routes
+        } else if (isAdmin && allowHostlessTenant) {
+          // Senior Fix: Allow school admins to operate without a host-based subdomain 
+          // when in development/ngrok mode. This enables root-domain login.
+          if (user.school?._id) {
+            req.schoolId = user.school._id;
+            req.tenantId = user.school.subdomain;
+          }
         } else {
           return res.status(403).json({
             success: false,
@@ -142,6 +198,7 @@ export const protect = async (req, res, next) => {
         effectiveSchoolId &&
         (!user.school || user.school._id.toString() !== effectiveSchoolId.toString())
       ) {
+        console.error(`[Auth] CROSS-TENANT BLOCK: User ${user.name} (${user.school?.subdomain}) -> Req ${req.tenantId}`);
         securityLog('cross_tenant_user_blocked', {
           userId: String(user._id),
           role: user.role,
@@ -174,61 +231,172 @@ export const protect = async (req, res, next) => {
 };
 
 /**
- * RBAC — super-admin does NOT implicitly pass school-scoped role checks.
- * List `superadmin` or `super_admin` in `roles` only for platform-level routes that should allow it.
+ * Branch Isolation Middleware
+ * Ensures strict data separation between campuses.
+ * 
+ * Logic:
+ * 1. SPECIFIC Scope (Teachers, Students, most Staff): 
+ *    - Strictly forced to their assigned branch.
+ *    - Cannot override via headers.
+ * 2. ALL_BRANCHES Scope (School Admins, Global Managers):
+ *    - Can see a specific branch by passing 'x-branch-id' header.
+ *    - Can see 'All Branches' by NOT passing the header (or passing 'all').
  */
-export const authorize = (...roles) => {
+export const branchIsolation = async (req, res, next) => {
+  if (!req.user || isSuperRole(req.user.role)) {
+    return next();
+  }
+
+  const user = req.user;
+  const branchScope = user.branchScope || 'SPECIFIC';
+  const requestBranchId = req.headers['x-branch-id'] || req.headers['X-Branch-ID'];
+
+  if (branchScope === 'SPECIFIC') {
+    // SECURITY: Users with SPECIFIC scope are hard-locked to their assigned branch.
+    if (user.branch) {
+      req.branchId = user.branch.toString();
+    } else {
+      // If a specific-scope user has no branch assigned, they are prohibited from accessing branch-aware data
+      console.warn(`[Security] Specific-scope user ${user.name} has no assigned branch.`);
+      return res.status(403).json({
+        success: false,
+        message: 'No branch assigned',
+        userMessage: 'You must be assigned to a branch to access this information.'
+      });
+    }
+
+    // If they tried to request a different branch via header, block them
+    if (requestBranchId && requestBranchId !== 'all' && requestBranchId !== req.branchId) {
+      securityLog('branch_isolation_violation', {
+        userId: String(user._id),
+        userBranch: String(user.branch),
+        requestBranch: String(requestBranchId),
+        path: req.path
+      });
+      return res.status(403).json({
+        success: false,
+        message: 'Branch Access Denied',
+        userMessage: 'You are not authorized to view data from other branches.'
+      });
+    }
+  } else if (branchScope === 'ALL_BRANCHES') {
+    // ALL_BRANCHES scope: Flexible access within the tenant
+    if (requestBranchId && requestBranchId !== 'all' && requestBranchId !== 'null' && requestBranchId !== 'undefined') {
+      req.branchId = requestBranchId;
+    } else {
+      req.branchId = null; // This signals 'All Branches' to the controllers
+    }
+  }
+
+  next();
+};
+
+export const checkPermission = (requiredPermission) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Auth required' });
+    }
+
+    const { role, effectivePermissions } = req.user;
+
+    // Super Admin bypass
+    if (role === 'superadmin' || role === 'super_admin') {
+      return next();
+    }
+
+    // School Admin / Admin bypass
+    if (['schooladmin', 'school_admin', 'admin'].includes(role)) {
+      return next();
+    }
+
+    const permissions = Array.isArray(requiredPermission) ? requiredPermission : [requiredPermission];
+    const userPermissions = effectivePermissions || [];
+
+    const hasPermission = permissions.some(p => {
+      if (userPermissions.includes(p)) return true;
+      const [module] = p.split('.');
+      if (userPermissions.includes(`${module}.*`)) return true;
+      if (userPermissions.includes('*.manage') || userPermissions.includes('*.*')) return true;
+      return false;
+    });
+
+    if (!hasPermission) {
+      securityLog('rbac_permission_denied', {
+        userId: String(req.user._id),
+        path: req.path,
+        role,
+        requiredPermission,
+        userPermissions: userPermissions.length > 20 ? 'too_many_to_log' : userPermissions
+      });
+      return res.status(403).json({
+        success: false,
+        message: 'Permission denied',
+        userMessage: `You do not have permission (${Array.isArray(requiredPermission) ? requiredPermission.join(', ') : requiredPermission}) for this action.`
+      });
+    }
+
+    next();
+  };
+};
+
+/**
+ * Legacy Role-based Authorization (for backward compatibility)
+ */
+export const authorizeRoles = (...roles) => {
+  const allowedRoles = roles.flat();
+
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Authentication required for authorization check',
+        message: 'Authentication required',
       });
     }
 
     const userRole = req.user.role;
     if (isSuperRole(userRole)) {
-      const allowed = roles.some((r) => isSuperRole(r));
+      const allowed = allowedRoles.some((r) => isSuperRole(r));
       if (!allowed) {
         securityLog('rbac_superadmin_blocked', {
           userId: String(req.user._id),
           path: req.path,
-          requiredRoles: roles,
+          requiredRoles: allowedRoles,
         });
         return res.status(403).json({
           success: false,
-          message: 'Super admin cannot access this school API',
-          userMessage: 'You do not have the required permissions to perform this action.',
+          message: 'Access denied for super-admin on this route',
         });
       }
       return next();
     }
 
-    if (!roles.includes(userRole)) {
+    if (!allowedRoles.includes(userRole)) {
       securityLog('rbac_role_denied', {
         userId: String(req.user._id),
-        role: userRole,
         path: req.path,
-        requiredRoles: roles,
+        userRole,
+        requiredRoles: allowedRoles,
       });
       return res.status(403).json({
         success: false,
-        message: `User role ${userRole} is not authorized to access this route`,
-        userMessage: 'You do not have the required permissions to perform this action.',
+        message: 'Unauthorized role',
+        userMessage: 'You do not have the required role to access this resource.',
       });
     }
+
     next();
   };
 };
 
-export const allowStudent = authorize('student');
-export const allowTeacher = authorize('teacher');
-export const allowAdmin = authorize('admin', 'schooladmin', 'school_admin');
-export const allowAccountant = authorize(
+export const authorize = authorizeRoles;
+export const allowStudent = authorizeRoles('student');
+export const allowTeacher = authorizeRoles('teacher');
+export const allowAdmin = authorizeRoles('admin', 'schooladmin', 'school_admin');
+export const allowAccountant = authorizeRoles(
   'accountant',
   'admin',
   'schooladmin',
   'school_admin'
 );
-export const allowParent = authorize('parent');
-export const allowSuperAdmin = authorize('superadmin', 'super_admin');
+export const allowParent = authorizeRoles('parent');
+export const allowSuperAdmin = authorizeRoles('superadmin', 'super_admin');

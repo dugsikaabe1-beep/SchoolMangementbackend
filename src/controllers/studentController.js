@@ -11,9 +11,15 @@ import Schedule from '../models/Schedule.js';
 import School from '../models/School.js';
 import ExamSession from '../models/ExamSession.js';
 
+const getScope = (req) => ({
+  schoolId: req.user.school?._id || req.user.school,
+  branchId: req.branchId || req.user.branch?._id || req.user.branch,
+});
+
 // --- View Class & Subjects ---
 export const getStudentClassAndSubjects = async (req, res) => {
   try {
+    const { schoolId, branchId } = getScope(req);
     const student = await User.findById(req.user._id).populate('class');
     if (!student.class) {
       return res.status(404).json({ message: 'No class assigned to this student' });
@@ -26,7 +32,8 @@ export const getStudentClassAndSubjects = async (req, res) => {
 
     const assignments = await ClassSubject.find({
       class: student.class._id,
-      school: req.user.school,
+      school: schoolId,
+      branch: branchId,
     })
       .populate('subject', 'name code')
       .populate('teacher', 'name profileImage');
@@ -47,11 +54,12 @@ export const getStudentClassAndSubjects = async (req, res) => {
 // --- View Schedule ---
 export const getStudentSchedule = async (req, res) => {
   try {
+    const { schoolId, branchId } = getScope(req);
     if (!req.user.class) {
       return res.status(404).json({ message: 'No class assigned to this student' });
     }
 
-    const schedules = await Schedule.find({ class: req.user.class, school: req.user.school })
+    const schedules = await Schedule.find({ class: req.user.class, school: schoolId, branch: branchId })
       .populate('subject', 'name code')
       .populate('teacher', 'name')
       .sort({ day: 1, startTime: 1 });
@@ -65,9 +73,11 @@ export const getStudentSchedule = async (req, res) => {
 // --- View Attendance ---
 export const getStudentAttendance = async (req, res) => {
   try {
+    const { schoolId, branchId } = getScope(req);
     const attendance = await Attendance.find({ 
       user: req.user._id,
-      school: req.user.school 
+      school: schoolId,
+      branch: branchId,
     }).sort({ date: -1 });
     res.json(attendance);
   } catch (error) {
@@ -81,9 +91,12 @@ export const getStudentAttendance = async (req, res) => {
 // --- View Exam Results ---
 export const getStudentResults = async (req, res) => {
   try {
+    const { schoolId, branchId } = getScope(req);
     // Check if student has any unpaid fees
     const unpaidPayments = await MonthlyPayment.find({
       student: req.user._id,
+      school: schoolId,
+      branch: branchId,
       status: 'UNPAID',
     }).sort({ year: 1, createdAt: 1 });
 
@@ -105,10 +118,10 @@ export const getStudentResults = async (req, res) => {
     }
 
   // Only return marks linked to an ExamSession (i.e., admin created the exam first)
-    const examSessions = await ExamSession.find({ school: req.user.school });
+    const examSessions = await ExamSession.find({ school: schoolId, branch: branchId });
     const examSessionIds = new Set(examSessions.map(e => e._id.toString()));
 
-    const allMarks = await Mark.find({ student: req.user._id })
+    const allMarks = await Mark.find({ student: req.user._id, school: schoolId, branch: branchId })
       .populate('subject', 'name code')
       .populate('class', 'name')
       .sort({ createdAt: -1 });
@@ -138,10 +151,8 @@ export const getStudentResults = async (req, res) => {
 
     if (req.user.class) {
       const classId = req.user.class;
-      const schoolId = req.user.school;
-      
-      const classStudents = await User.find({ class: classId, role: 'student', school: schoolId }).select('_id');
-      const allClassMarks = await Mark.find({ class: classId, school: schoolId });
+      const classStudents = await User.find({ class: classId, role: 'student', school: schoolId, branch: branchId }).select('_id');
+      const allClassMarks = await Mark.find({ class: classId, school: schoolId, branch: branchId });
       
       // Define exam progression
       const examTypes = [
@@ -205,9 +216,11 @@ export const getStudentResults = async (req, res) => {
  */
 export const getMyMonthlyPayments = async (req, res) => {
   try {
+    const { schoolId, branchId } = getScope(req);
     const payments = await MonthlyPayment.find({
       student: req.user._id,
-      school: req.user.school,
+      school: schoolId,
+      branch: branchId,
     }).sort({ year: 1, createdAt: 1 });
 
     const paidPayments   = payments.filter(p => p.status === 'PAID');
@@ -222,7 +235,7 @@ export const getMyMonthlyPayments = async (req, res) => {
     const tuitionFee = payments.length > 0 ? payments[0].amount : 0;
 
     // School's EVC Plus merchant number for USSD payment
-    const school = await School.findById(req.user.school).select('merchantNumber name');
+    const school = await School.findById(schoolId).select('merchantNumber name');
     const merchantNumber = school?.merchantNumber || '';
 
     res.json({
@@ -253,10 +266,12 @@ export const payMonthlyFee = async (req, res) => {
   const { studentId } = req.body; // The student ID entered in the UI (for confirmation)
 
   try {
+    const { schoolId, branchId } = getScope(req);
     // Find the payment record and ensure it belongs to this student
     const mp = await MonthlyPayment.findOne({
       _id: id,
-      school: req.user.school,
+      school: schoolId,
+      branch: branchId,
     });
 
     if (!mp) {
@@ -284,8 +299,8 @@ export const payMonthlyFee = async (req, res) => {
     await mp.save();
 
     // Update the PaymentMonth aggregate counts
-    const paidCount   = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'PAID',   school: req.user.school });
-    const unpaidCount = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'UNPAID', school: req.user.school });
+    const paidCount   = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'PAID',   school: schoolId, branch: branchId });
+    const unpaidCount = await MonthlyPayment.countDocuments({ paymentMonth: mp.paymentMonth, status: 'UNPAID', school: schoolId, branch: branchId });
     await PaymentMonth.findByIdAndUpdate(mp.paymentMonth, { paidCount, unpaidCount });
 
     res.json({ message: 'Payment successful', payment: mp });
@@ -333,7 +348,8 @@ export const payMonthlyFees = async (req, res) => {
 // --- Legacy: View Payment History ---
 export const getPaymentHistory = async (req, res) => {
   try {
-    const history = await Payment.find({ student: req.user._id }).sort({ date: -1 });
+    const { schoolId } = getScope(req);
+    const history = await Payment.find({ student: req.user._id, school: schoolId }).sort({ date: -1 });
     res.json(history);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -344,7 +360,7 @@ export const getPaymentHistory = async (req, res) => {
 export const getStudentDashboardStats = async (req, res) => {
   try {
     const studentId = req.user._id;
-    const schoolId = req.user.school;
+    const { schoolId, branchId } = getScope(req);
     
     const student = await User.findById(studentId).populate('class');
     if (!student) {
@@ -376,15 +392,16 @@ export const getStudentDashboardStats = async (req, res) => {
     const school = await School.findById(schoolId).select('name');
 
     // Calculate attendance
-    const totalAttendance = await Attendance.countDocuments({ user: studentId, school: schoolId });
-    const presentAttendance = await Attendance.countDocuments({ user: studentId, status: 'Present', school: schoolId });
-    const absentAttendance = await Attendance.countDocuments({ user: studentId, status: 'Absent', school: schoolId });
+    const totalAttendance = await Attendance.countDocuments({ user: studentId, school: schoolId, branch: branchId });
+    const presentAttendance = await Attendance.countDocuments({ user: studentId, status: 'Present', school: schoolId, branch: branchId });
+    const absentAttendance = await Attendance.countDocuments({ user: studentId, status: 'Absent', school: schoolId, branch: branchId });
     const attendancePercentage = totalAttendance > 0 ? (presentAttendance / totalAttendance) * 100 : 0;
 
     // Get subjects
     const subjectAssignments = await ClassSubject.find({ 
       class: student.class._id, 
-      school: schoolId 
+      school: schoolId,
+      branch: branchId,
     }).populate('subject', 'name code');
 
     const subjects = subjectAssignments
@@ -398,7 +415,8 @@ export const getStudentDashboardStats = async (req, res) => {
     // Get results
     const marks = await Mark.find({ 
       student: studentId, 
-      school: schoolId 
+      school: schoolId,
+      branch: branchId,
     }).populate('subject', 'name code');
 
     const results = marks.map(m => {
@@ -433,7 +451,8 @@ export const getStudentDashboardStats = async (req, res) => {
     // Get fees info
     const payments = await MonthlyPayment.find({ 
       student: studentId, 
-      school: schoolId 
+      school: schoolId,
+      branch: branchId,
     });
 
     const paidPayments = payments.filter(p => p.status === 'PAID');
@@ -447,9 +466,9 @@ export const getStudentDashboardStats = async (req, res) => {
     const currentMonthlyFee = student.monthlyFees || student.class?.monthlyFees || 0;
 
     // Calculate rank
-    const classStudents = await User.find({ class: student.class._id, role: 'student', school: schoolId });
+    const classStudents = await User.find({ class: student.class._id, role: 'student', school: schoolId, branch: branchId });
     const studentAverages = await Promise.all(classStudents.map(async (s) => {
-      const studentMarks = await Mark.find({ student: s._id, school: schoolId });
+      const studentMarks = await Mark.find({ student: s._id, school: schoolId, branch: branchId });
       if (studentMarks.length === 0) return { id: s._id, avg: 0 };
       const total = studentMarks.reduce((acc, m) => {
         return acc + (m.monthly1 || 0) + (m.midterm || 0) + (m.monthly2 || 0) + (m.final || 0);

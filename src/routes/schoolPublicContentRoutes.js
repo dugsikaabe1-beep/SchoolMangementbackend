@@ -8,13 +8,13 @@ import {
 } from '../controllers/publicContentController.js';
 import { uploadFile } from '../controllers/uploadController.js';
 import { uploadImageMiddleware } from '../middlewares/uploadMiddleware.js';
-import { protect, authorize } from '../middlewares/authMiddleware.js';
+import { protect, authorizeRoles } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
 // Protected routes (School Admin only)
 router.use(protect);
-router.use(authorize('schooladmin', 'admin', 'school_admin'));
+router.use(authorizeRoles('schooladmin', 'admin', 'school_admin'));
 
 // Image upload
 router.post('/upload', uploadImageMiddleware, uploadFile);

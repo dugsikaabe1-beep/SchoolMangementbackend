@@ -16,26 +16,54 @@ export const parseAllowedOrigins = () => {
       );
       return null;
     }
-    return [/^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?$/i];
+    return [
+      /^(https?:\/\/)(residence-rarity-itunes\.ngrok-free\.dev|localhost|127\.0\.0\.1)(:\d+)?$/i,
+      /\.vercel\.app$/i,
+      /dugsihub-lilac\.vercel\.app$/i,
+      /\.ngrok-free\.dev$/i
+    ];
   }
 
   return raw.split(',').map((s) => s.trim()).filter(Boolean).map((entry) => {
     if (entry.toLowerCase().startsWith('regex:')) {
       const pattern = entry.slice(6);
-      return new RegExp(pattern);
+      try {
+        return new RegExp(pattern);
+      } catch (e) {
+        console.error(`Invalid CORS regex pattern: ${pattern}`, e);
+        return null;
+      }
     }
     return entry;
-  });
+  }).filter(Boolean);
 };
 
 export const originMatcher = (allowed) => (origin, callback) => {
+  // 1. Allow non-browser clients (curl, mobile native)
   if (!origin) {
-    // Non-browser clients (curl, mobile native) — tenant is still derived from Host, not Origin.
     return callback(null, true);
   }
-  const ok = allowed.some((rule) =>
-    rule instanceof RegExp ? rule.test(origin) : rule === origin
-  );
+
+  // 2. Match against the allowed list
+  const ok = allowed.some((rule) => {
+    if (rule instanceof RegExp) {
+      return rule.test(origin);
+    }
+    return rule === origin;
+  });
+  
   if (ok) return callback(null, true);
+
+  // 3. In development, be more permissive with common dev domains if not explicitly matched
+  if (process.env.NODE_ENV === 'development') {
+    if (origin.startsWith('http://localhost') || 
+        origin.startsWith('http://127.0.0.1') ||
+        origin.includes('ngrok-free.dev') ||
+        origin.includes('vercel.app')) {
+      return callback(null, true);
+    }
+  }
+  
+  console.warn(`[CORS] Blocked origin: ${origin}. If this should be allowed, add it to CORS_ALLOWED_ORIGINS in .env`);
   return callback(new Error('CORS Policy Violation: Origin not allowed'));
 };

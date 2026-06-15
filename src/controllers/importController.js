@@ -6,8 +6,11 @@ import Mark from '../models/Mark.js';
 import Subject from '../models/Subject.js';
 import Exam from '../models/Exam.js';
 import School from '../models/School.js';
+import Branch from '../models/Branch.js';
 import mongoose from 'mongoose';
 import { generateCustomId } from '../utils/schoolUtils.js';
+import { logAction } from '../utils/auditLogger.js';
+import { getCurrentAcademicYear } from '../utils/academicUtils.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -21,6 +24,11 @@ function generateRawPassword(name) {
 
 async function generateTeacherId(schoolId) {
   return await generateCustomId('teacher', schoolId);
+}
+
+function getObjectId(value) {
+  if (!value) return null;
+  return value._id || value.id || value;
 }
 
 async function parseWorkbook(buffer, mimetype) {
@@ -60,8 +68,52 @@ async function parseWorkbook(buffer, mimetype) {
 export const importStudents = async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
-  const schoolId = req.user.school;
+  const schoolId = getObjectId(req.user.school || req.schoolId);
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
+
+  // Resolve branch ID
+  let branchId = getObjectId(req.branchId || req.user.branch);
+  
+  if (!branchId) {
+    // First try to find Main Branch by name or code
+    let branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+    }).sort({ createdAt: 1 });
+
+    // If no Main Branch found, get first active branch
+    if (!branch) {
+      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
+    }
+
+    // If still no branch found, automatically create Main Branch
+    if (!branch) {
+      branch = await Branch.create({
+        tenant: schoolId,
+        name: 'Main Branch',
+        code: 'MAIN',
+        status: 'active',
+        createdBy: req.user._id
+      });
+    }
+    branchId = branch._id;
+  }
+
+  // Resolve academic year ID
+  let academicYearId = req.academicYearId;
+  if (!academicYearId) {
+    const academicYear = await getCurrentAcademicYear(schoolId, branchId);
+    if (!academicYear) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active academic year found. Please configure an academic year first.',
+        userMessage: 'No active academic year found. Please configure an academic year first.',
+      });
+    }
+    academicYearId = academicYear._id;
+  }
 
   // credentialMode: 'auto' (default) or 'delayed'
   const credentialMode = req.body.credentialMode === 'delayed' ? 'delayed' : 'auto';
@@ -77,10 +129,18 @@ export const importStudents = async (req, res) => {
 
   if (rows.length === 0) return res.status(422).json({ success: false, message: 'The file contains no data rows.' });
 
+  console.info('[StudentImport] parsed upload', {
+    dryRun,
+    rows: rows.length,
+    schoolId: String(schoolId),
+    branchId: String(branchId),
+    academicYearId: String(academicYearId),
+  });
+
   const results = { created: [], skipped: [], errors: [] };
   const credentialsList = [];
 
-  const existingClasses = await Class.find({ school: schoolId }).lean();
+  const existingClasses = await Class.find({ school: schoolId, branch: branchId, isDeleted: { $ne: true } }).lean();
   const classMap = {};
   existingClasses.forEach((c) => {
     classMap[`${c.name.toLowerCase()}|${(c.section || 'a').toLowerCase()}`] = c;
@@ -127,13 +187,24 @@ export const importStudents = async (req, res) => {
       continue;
     }
 
-    // DB-level duplicate detection
-    const dupQuery = { school: schoolId, role: 'student' };
-    if (phone) dupQuery.phone = phone;
-    else if (email) dupQuery.email = email;
-    const duplicate = (phone || email) ? await User.findOne(dupQuery).lean() : null;
+    // DB-level duplicate detection (scoped to tenant + branch)
+    const duplicateTerms = [];
+    if (phone) duplicateTerms.push({ phone });
+    if (email) duplicateTerms.push({ email });
+    const duplicateQuery = { 
+      school: schoolId, 
+      branch: branchId,
+      role: 'student', 
+      isDeleted: { $ne: true }
+    };
+    if (duplicateTerms.length > 0) {
+      duplicateQuery.$or = duplicateTerms;
+    }
+    const duplicate = duplicateTerms.length
+      ? await User.findOne(duplicateQuery).lean()
+      : null;
     if (duplicate) {
-      results.skipped.push({ row: rowNum, data: { name, phone, email }, reason: 'Duplicate record (same phone/email already exists in this school).' });
+      results.skipped.push({ row: rowNum, data: { name, phone, email }, reason: `Duplicate record (same phone/email already exists in this school and branch).` });
       continue;
     }
 
@@ -151,10 +222,17 @@ export const importStudents = async (req, res) => {
         continue;
       }
       try {
-        classDoc = await Class.create({ name: className.charAt(0).toUpperCase() + className.slice(1), section, maxStudents: 40, school: schoolId });
+        classDoc = await Class.create({
+          name: className.charAt(0).toUpperCase() + className.slice(1),
+          section,
+          maxStudents: 40,
+          school: schoolId,
+          branch: branchId,
+          createdBy: req.user._id,
+        });
         classMap[classKey] = classDoc;
       } catch (err) {
-        classDoc = await Class.findOne({ school: schoolId, name: { $regex: new RegExp(`^${className}$`, 'i') }, section: { $regex: new RegExp(`^${section}$`, 'i') } }).lean();
+        classDoc = await Class.findOne({ school: schoolId, branch: branchId, name: { $regex: new RegExp(`^${className}$`, 'i') }, section: { $regex: new RegExp(`^${section}$`, 'i') }, isDeleted: { $ne: true } }).lean();
         if (!classDoc) {
           results.errors.push({ row: rowNum, data: { name, phone }, errors: [`Could not resolve or create class "${className} ${section}": ${err.message}`] });
           continue;
@@ -190,12 +268,22 @@ export const importStudents = async (req, res) => {
         credentialsGenerated: isAuto,
         role: 'student',
         school: schoolId,
+        branch: branchId,
+        academicYear: academicYearId,
         class: classDoc._id,
         customId,
         status: 'active',
       });
 
-      results.created.push({ row: rowNum, name: student.name, customId: student.customId });
+      results.created.push({
+        row: rowNum,
+        _id: student._id,
+        name: student.name,
+        customId: student.customId,
+        class: student.class,
+        branch: student.branch,
+        academicYear: student.academicYear,
+      });
       if (isAuto) {
         credentialsList.push({ name: student.name, customId: student.customId, class: `${classDoc.name} ${classDoc.section}`, username: student.customId, password: rawPassword });
       }
@@ -204,11 +292,58 @@ export const importStudents = async (req, res) => {
     }
   }
 
+  const insertedIds = results.created.map((student) => student._id).filter(Boolean);
+  const verifiedInsertedCount = !dryRun && insertedIds.length
+    ? await User.countDocuments({
+        _id: { $in: insertedIds },
+        school: schoolId,
+        branch: branchId,
+        academicYear: academicYearId,
+        role: 'student',
+        isDeleted: { $ne: true },
+      })
+    : 0;
+
+  if (!dryRun && verifiedInsertedCount !== results.created.length) {
+    console.error('[StudentImport] verification mismatch', {
+      requestedCreated: results.created.length,
+      verifiedInsertedCount,
+      insertedIds: insertedIds.map(String),
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Import verification failed. Created count does not match database records.',
+      userMessage: 'Import verification failed. Please try again or contact support.',
+      summary: { total: rows.length, created: verifiedInsertedCount, skipped: results.skipped.length, errors: results.errors.length },
+      created: results.created,
+      skipped: results.skipped,
+      errors: results.errors,
+    });
+  }
+
+  console.info('[StudentImport] completed', {
+    dryRun,
+    received: rows.length,
+    inserted: dryRun ? 0 : verifiedInsertedCount,
+    validPreview: dryRun ? results.created.length : undefined,
+    skipped: results.skipped.length,
+    failed: results.errors.length,
+    transactionStatus: 'not_used_verified',
+  });
+
+  if (results.created.length > 0 && !dryRun) {
+    logAction(req, {
+      action: 'STUDENTS_BULK_IMPORT',
+      module: 'STUDENTS',
+      details: { count: verifiedInsertedCount, summary: { total: rows.length, created: verifiedInsertedCount, skipped: results.skipped.length, errors: results.errors.length } }
+    });
+  }
+
   return res.status(200).json({
-    success: true,
+    success: dryRun || verifiedInsertedCount === results.created.length,
     dryRun,
     credentialMode,
-    summary: { total: rows.length, created: results.created.length, skipped: results.skipped.length, errors: results.errors.length },
+    summary: { total: rows.length, created: dryRun ? results.created.length : verifiedInsertedCount, skipped: results.skipped.length, errors: results.errors.length },
     willCreate: dryRun ? results.created : undefined,
     created: !dryRun ? results.created : undefined,
     skipped: results.skipped,
@@ -287,11 +422,11 @@ export const downloadCredentials = async (req, res) => {
   const sheet = workbook.addWorksheet('Credentials');
 
   sheet.columns = [
-    { header: 'Student Name', key: 'name',     width: 28 },
-    { header: 'Student ID',   key: 'customId',  width: 15 },
-    { header: 'Class',        key: 'class',     width: 18 },
-    { header: 'Username',     key: 'username',  width: 15 },
-    { header: 'Password',     key: 'password',  width: 20 },
+    { header: 'Student Name', key: 'name', width: 28 },
+    { header: 'Student ID', key: 'customId', width: 15 },
+    { header: 'Class', key: 'class', width: 18 },
+    { header: 'Username', key: 'username', width: 15 },
+    { header: 'Password', key: 'password', width: 20 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -320,11 +455,11 @@ export const downloadStudentErrorReport = async (req, res) => {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Error Report');
   sheet.columns = [
-    { header: 'Row #',          key: 'row',     width: 10 },
-    { header: 'Name',           key: 'name',    width: 25 },
-    { header: 'Phone',          key: 'phone',   width: 18 },
-    { header: 'Email',          key: 'email',   width: 28 },
-    { header: 'Error Details',  key: 'errors',  width: 55 },
+    { header: 'Row #', key: 'row', width: 10 },
+    { header: 'Name', key: 'name', width: 25 },
+    { header: 'Phone', key: 'phone', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Error Details', key: 'errors', width: 55 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -353,13 +488,52 @@ export const importExamResults = async (req, res) => {
   const schoolId = req.user.school;
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
+  // Resolve branch ID
+  let branchId = getObjectId(req.branchId || req.user.branch);
+  
+  if (!branchId) {
+    // First try to find Main Branch by name or code
+    let branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+    }).sort({ createdAt: 1 });
+
+    // If no Main Branch found, get first active branch
+    if (!branch) {
+      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
+    }
+
+    // If still no branch found, automatically create Main Branch
+    if (!branch) {
+      branch = await Branch.create({
+        tenant: schoolId,
+        name: 'Main Branch',
+        code: 'MAIN',
+        status: 'active',
+        createdBy: req.user._id
+      });
+    }
+    branchId = branch._id;
+  }
+
+  // Resolve academic year
+  let academicYearName = req.academicYearName;
+  if (!academicYearName) {
+    const academicYear = await getCurrentAcademicYear(schoolId, branchId);
+    if (academicYear) {
+      academicYearName = academicYear.name;
+    }
+  }
+
   const { examId } = req.body;
   if (!examId) return res.status(400).json({ success: false, message: '`examId` is required in the request body.' });
 
-  const dryRun = req.body.dryRun === 'true' || req.body.dryRun === true;
-
   const exam = await Exam.findOne({ _id: examId, school: schoolId }).lean();
   if (!exam) return res.status(404).json({ success: false, message: 'Exam not found for this school.' });
+
+  const dryRun = req.body.dryRun === 'true' || req.body.dryRun === true;
 
   let rows;
   try {
@@ -416,7 +590,17 @@ export const importExamResults = async (req, res) => {
     }
 
     try {
-      await Mark.create({ student: student._id, subject: subjectDoc._id, exam: examId, school: schoolId, score, term });
+      await Mark.create({
+        student: student._id,
+        subject: subjectDoc._id,
+        class: student.class, // Get class from student
+        exam: examId,
+        school: schoolId,
+        branch: branchId,
+        academicYear: academicYearName,
+        score,
+        term
+      });
       results.inserted.push({ row: rowNum, studentId, subjectName, score });
     } catch (err) {
       results.errors.push({ row: rowNum, data: { studentId, subjectName, score }, errors: [`Database error: ${err.message}`] });
@@ -445,11 +629,11 @@ export const downloadExamErrorReport = async (req, res) => {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Exam Error Report');
   sheet.columns = [
-    { header: 'Row #',        key: 'row',         width: 10 },
-    { header: 'Student ID',   key: 'studentId',   width: 15 },
-    { header: 'Subject',      key: 'subjectName', width: 20 },
-    { header: 'Score',        key: 'score',       width: 10 },
-    { header: 'Error Details',key: 'errors',      width: 55 },
+    { header: 'Row #', key: 'row', width: 10 },
+    { header: 'Student ID', key: 'studentId', width: 15 },
+    { header: 'Subject', key: 'subjectName', width: 20 },
+    { header: 'Score', key: 'score', width: 10 },
+    { header: 'Error Details', key: 'errors', width: 55 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -477,17 +661,17 @@ export const downloadStudentTemplate = async (req, res) => {
   const sheet = workbook.addWorksheet('Students');
 
   sheet.columns = [
-    { header: 'Full Name',      key: 'full_name',     width: 25 },
-    { header: 'Gender',         key: 'gender',         width: 10 },
-    { header: 'Phone Number',   key: 'phone_number',   width: 18 },
-    { header: 'Email',          key: 'email',          width: 28 },
-    { header: 'Class Name',     key: 'class_name',     width: 15 },
-    { header: 'Section',        key: 'section',        width: 10 },
-    { header: 'Parent Name',    key: 'parent_name',    width: 25 },
+    { header: 'Full Name', key: 'full_name', width: 25 },
+    { header: 'Gender', key: 'gender', width: 10 },
+    { header: 'Phone Number', key: 'phone_number', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Class Name', key: 'class_name', width: 15 },
+    { header: 'Section', key: 'section', width: 10 },
+    { header: 'Parent Name', key: 'parent_name', width: 25 },
     { header: 'Place of Birth', key: 'place_of_birth', width: 20 },
-    { header: 'Address',        key: 'address',        width: 30 },
-    { header: 'Monthly Fees',   key: 'monthly_fees',   width: 15 },
-    { header: 'Mode',           key: 'mode',           width: 12 },
+    { header: 'Address', key: 'address', width: 30 },
+    { header: 'Monthly Fees', key: 'monthly_fees', width: 15 },
+    { header: 'Mode', key: 'mode', width: 12 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -534,9 +718,9 @@ export const downloadExamTemplate = async (req, res) => {
 
   sheet.columns = [
     { header: 'Student ID', key: 'student_id', width: 15 },
-    { header: 'Subject',    key: 'subject',     width: 20 },
-    { header: 'Score',      key: 'score',       width: 10 },
-    { header: 'Term',       key: 'term',        width: 15 },
+    { header: 'Subject', key: 'subject', width: 20 },
+    { header: 'Score', key: 'score', width: 10 },
+    { header: 'Term', key: 'term', width: 15 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -547,7 +731,7 @@ export const downloadExamTemplate = async (req, res) => {
   sheet.getRow(1).height = 22;
 
   sheet.addRow({ student_id: 'STD0001', subject: 'Mathematics', score: '88', term: 'Term 1' });
-  sheet.addRow({ student_id: 'STD0002', subject: 'English',     score: '74', term: 'Term 1' });
+  sheet.addRow({ student_id: 'STD0002', subject: 'English', score: '74', term: 'Term 1' });
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="exam_import_template.xlsx"');
@@ -562,6 +746,50 @@ export const importTeachers = async (req, res) => {
 
   const schoolId = req.user.school;
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
+
+  // Resolve branch ID
+  let branchId = getObjectId(req.branchId || req.user.branch);
+  
+  if (!branchId) {
+    // First try to find Main Branch by name or code
+    let branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+    }).sort({ createdAt: 1 });
+
+    // If no Main Branch found, get first active branch
+    if (!branch) {
+      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
+    }
+
+    // If still no branch found, automatically create Main Branch
+    if (!branch) {
+      branch = await Branch.create({
+        tenant: schoolId,
+        name: 'Main Branch',
+        code: 'MAIN',
+        status: 'active',
+        createdBy: req.user._id
+      });
+    }
+    branchId = branch._id;
+  }
+
+  // Resolve academic year ID
+  let academicYearId = req.academicYearId;
+  if (!academicYearId) {
+    const academicYear = await getCurrentAcademicYear(schoolId, branchId);
+    if (!academicYear) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active academic year found. Please configure an academic year first.',
+        userMessage: 'No active academic year found. Please configure an academic year first.',
+      });
+    }
+    academicYearId = academicYear._id;
+  }
 
   const dryRun = req.body.dryRun === 'true' || req.body.dryRun === true;
 
@@ -613,7 +841,7 @@ export const importTeachers = async (req, res) => {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) rowErrors.push('Invalid email format.');
     if (row.age && (isNaN(age) || age < 18 || age > 70)) rowErrors.push('Age must be between 18 and 70.');
     if (startTime && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(startTime)) rowErrors.push('Invalid working start time format (HH:MM).');
-    if (endTime   && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(endTime))   rowErrors.push('Invalid working end time format (HH:MM).');
+    if (endTime   && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(endTime)) rowErrors.push('Invalid working end time format (HH:MM).');
     if (unresolvedSubjects.length > 0) rowErrors.push(`Subjects not found: ${unresolvedSubjects.join(', ')}. Create them first.`);
 
     if (rowErrors.length > 0) {
@@ -631,13 +859,13 @@ export const importTeachers = async (req, res) => {
       continue;
     }
 
-    // DB-level duplicate check
-    const dupQuery = { school: schoolId, role: 'teacher' };
+    // DB-level duplicate check (scoped to tenant + branch)
+    const dupQuery = { school: schoolId, branch: branchId, role: 'teacher', isDeleted: { $ne: true } };
     if (phone) dupQuery.phone = phone;
     else if (email) dupQuery.email = email;
     const duplicate = (phone || email) ? await User.findOne(dupQuery).lean() : null;
     if (duplicate) {
-      results.skipped.push({ row: rowNum, data: { name, phone, email }, reason: 'Teacher already exists (same phone/email).' });
+      results.skipped.push({ row: rowNum, data: { name, phone, email }, reason: 'Teacher already exists in this school and branch (same phone/email).' });
       continue;
     }
 
@@ -665,6 +893,8 @@ export const importTeachers = async (req, res) => {
         password: rawPassword,
         role: 'teacher',
         school: schoolId,
+        branch: branchId,
+        academicYear: academicYearId,
         customId,
         status: 'active',
       });
@@ -672,6 +902,14 @@ export const importTeachers = async (req, res) => {
     } catch (err) {
       results.errors.push({ row: rowNum, data: { name, phone, email }, errors: [`Database error: ${err.message}`] });
     }
+  }
+
+  if (results.created.length > 0 && !dryRun) {
+    logAction(req, {
+      action: 'TEACHERS_BULK_IMPORT',
+      module: 'TEACHERS',
+      details: { count: results.created.length, summary: results.summary }
+    });
   }
 
   return res.status(200).json({
@@ -700,11 +938,11 @@ export const downloadTeacherErrorReport = async (req, res) => {
   const workbook = new ExcelJS.Workbook();
   const sheet    = workbook.addWorksheet('Teacher Import Errors');
   sheet.columns  = [
-    { header: 'Row #',        key: 'row',    width: 10 },
-    { header: 'Name',         key: 'name',   width: 25 },
-    { header: 'Phone',        key: 'phone',  width: 18 },
-    { header: 'Email',        key: 'email',  width: 28 },
-    { header: 'Error Details',key: 'errors', width: 55 },
+    { header: 'Row #', key: 'row', width: 10 },
+    { header: 'Name', key: 'name', width: 25 },
+    { header: 'Phone', key: 'phone', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Error Details', key: 'errors', width: 55 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
@@ -732,24 +970,24 @@ export const downloadTeacherTemplate = async (req, res) => {
   const sheet    = workbook.addWorksheet('Teachers');
 
   sheet.columns = [
-    { header: 'Full Name',           key: 'full_name',          width: 25 },
-    { header: 'Phone Number',        key: 'phone_number',       width: 18 },
-    { header: 'Email',               key: 'email',              width: 28 },
-    { header: 'Age',                 key: 'age',                width: 8  },
-    { header: 'Subjects',            key: 'subjects',           width: 35 },
-    { header: 'Working Start Time',  key: 'working_start_time', width: 20 },
-    { header: 'Working End Time',    key: 'working_end_time',   width: 18 },
+    { header: 'Full Name', key: 'full_name', width: 25 },
+    { header: 'Phone Number', key: 'phone_number', width: 18 },
+    { header: 'Email', key: 'email', width: 28 },
+    { header: 'Age', key: 'age', width: 8 },
+    { header: 'Subjects', key: 'subjects', width: 35 },
+    { header: 'Working Start Time', key: 'working_start_time', width: 20 },
+    { header: 'Working End Time', key: 'working_end_time', width: 18 },
   ];
 
   sheet.getRow(1).eachCell((cell) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } }; // emerald
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
   });
   sheet.getRow(1).height = 22;
 
   sheet.addRow({ full_name: 'Ahmed Ali Hassan', phone_number: '0612345678', email: 'ahmed@school.com', age: '35', subjects: 'Mathematics, Physics', working_start_time: '07:30', working_end_time: '14:00' });
-  sheet.addRow({ full_name: 'Fatima Omar Said', phone_number: '0698765432', email: '',                 age: '28', subjects: 'English',              working_start_time: '08:00', working_end_time: '15:00' });
+  sheet.addRow({ full_name: 'Fatima Omar Said', phone_number: '0698765432', email: '', age: '28', subjects: 'English', working_start_time: '08:00', working_end_time: '15:00' });
 
   // Instructions sheet
   const infoSheet = workbook.addWorksheet('Instructions');
@@ -760,8 +998,8 @@ export const downloadTeacherTemplate = async (req, res) => {
     ['Required columns:  Full Name'],
     ['Optional columns:  Phone Number, Email, Age, Subjects, Working Start Time, Working End Time'],
     [''],
-    ['Subjects: comma-separated list of subject NAMES that already exist in your school (e.g. "Mathematics, Physics")'],
-    ['Working times must be in HH:MM format (e.g. 07:30)'],
+    ['Subjects: comma-separated list of subject NAMES that already exist in your school (e.g., "Mathematics, Physics")'],
+    ['Working times must be in HH:MM format (e.g., 07:30)'],
     ['Age must be between 18 and 70'],
     ['Phone numbers must be 7-15 digits (+ allowed)'],
     ['Each teacher will receive an auto-generated Teacher ID and login password'],

@@ -1,6 +1,18 @@
 import School from '../models/School.js';
 import User from '../models/User.js';
+import SupportTicket from '../models/SupportTicket.js';
+import Lead from '../models/Lead.js';
+import SystemAnnouncement from '../models/SystemAnnouncement.js';
+import KnowledgeBase from '../models/KnowledgeBase.js';
+import SystemIntegration from '../models/SystemIntegration.js';
+import SystemConfig from '../models/SystemConfig.js';
+import BackupRecord from '../models/BackupRecord.js';
+import Plan from '../models/Plan.js';
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import os from 'os';
+import { logAction } from '../utils/auditLogger.js';
+import { generateOTP, hashOTP, sendOTPEmail } from '../utils/twoFactorUtils.js';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -12,6 +24,9 @@ const SCHOOL_ADMIN_ROLES = ['schooladmin', 'school_admin'];
 
 const isSuperAdminUser = (user) =>
   SUPER_ADMIN_ROLES.includes(user?.role) || user?.isSuperAdmin === true;
+
+import { sendVerificationEmail } from '../utils/emailService.js';
+import crypto from 'crypto';
 
 // --- Super Admin Login ---
 export const superAdminLogin = async (req, res) => {
@@ -59,16 +74,26 @@ export const superAdminLogin = async (req, res) => {
       });
     }
 
-    const access = generateAccessToken(user);
-    setTokenCookies(res, generateRefreshToken(user));
+    // --- 2FA for Super Admin Login ---
+    const otp = generateOTP();
+    user.otp = await hashOTP(otp);
+    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    user.otpAttempts = 0;
+    await user.save();
+
+    await sendOTPEmail(user.email, otp, user);
+
+    await logAction(req, {
+      action: 'SUPER_ADMIN_LOGIN_PENDING_2FA',
+      module: 'AUTH',
+      details: { email: user.email }
+    });
 
     return res.json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: 'superadmin',
-      isSuperAdmin: true,
-      token: access,
+      requires2FA: true,
+      userId: user._id,
+      email: user.email.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => gp2 + '*'.repeat(gp3.length)),
+      message: 'A verification code has been sent to your super admin email.'
     });
   } catch (error) {
     console.error('Super Admin Login Error:', error);
@@ -76,6 +101,159 @@ export const superAdminLogin = async (req, res) => {
       message: 'Login failed',
       userMessage: 'An error occurred during login. Please try again.'
     });
+  }
+};
+
+// --- CRM & Lead Management ---
+export const getLeads = async (req, res) => {
+  try {
+    const leads = await Lead.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 });
+    res.json(leads);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateLead = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const lead = await Lead.findByIdAndUpdate(id, req.body, { new: true });
+    res.json(lead);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- System Announcements & Feature Releases ---
+export const createSystemAnnouncement = async (req, res) => {
+  try {
+    const announcement = await SystemAnnouncement.create({
+      ...req.body,
+      createdBy: req.user._id,
+      publishedAt: req.body.isPublished ? new Date() : null
+    });
+    res.status(201).json(announcement);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getSystemAnnouncements = async (req, res) => {
+  try {
+    const announcements = await SystemAnnouncement.find().sort({ createdAt: -1 });
+    res.json(announcements);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Knowledge Base ---
+export const manageKnowledgeBase = async (req, res) => {
+  try {
+    const { action, id, data } = req.body;
+    if (action === 'create') {
+      const article = await KnowledgeBase.create({ ...data, createdBy: req.user._id });
+      return res.status(201).json(article);
+    }
+    if (action === 'update') {
+      const article = await KnowledgeBase.findByIdAndUpdate(id, data, { new: true });
+      return res.json(article);
+    }
+    if (action === 'delete') {
+      await KnowledgeBase.findByIdAndDelete(id);
+      return res.json({ message: 'Article deleted' });
+    }
+    const articles = await KnowledgeBase.find().sort({ category: 1, title: 1 });
+    res.json(articles);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Maintenance Mode ---
+export const toggleMaintenanceMode = async (req, res) => {
+  const { isEnabled } = req.body;
+  try {
+    const config = await SystemConfig.findOneAndUpdate(
+      { key: 'maintenance_mode' },
+      { value: isEnabled, updatedBy: req.user._id },
+      { upsert: true, new: true }
+    );
+    res.json({ message: `Maintenance mode ${isEnabled ? 'enabled' : 'disabled'}`, config });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Integration & Gateway Management ---
+export const manageIntegrations = async (req, res) => {
+  try {
+    const integrations = await SystemIntegration.find();
+    res.json(integrations);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateIntegration = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const integration = await SystemIntegration.findByIdAndUpdate(
+      id,
+      { ...req.body, updatedBy: req.user._id },
+      { new: true }
+    );
+    res.json(integration);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Disaster Recovery Center ---
+export const getDisasterRecoveryStatus = async (req, res) => {
+  try {
+    const lastBackup = await BackupRecord.findOne().sort({ createdAt: -1 });
+    const recoveryLogs = await BackupRecord.find().sort({ createdAt: -1 }).limit(10);
+    res.json({
+      lastBackup,
+      recoveryLogs,
+      recoveryHealth: 'Excellent' // Placeholder for real health check logic
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- Customer Success & Enhanced Analytics ---
+export const getSuperAdminAnalytics = async (req, res) => {
+  try {
+    const totalSchools = await School.countDocuments();
+    const activeSchools = await School.countDocuments({ isActive: true });
+    const trialSchools = await School.countDocuments({ 'subscription.status': 'Trial' });
+    const expiredSchools = await School.countDocuments({ 'subscription.status': 'Expired' });
+    
+    const revenueStats = await School.aggregate([
+      { $match: { 'subscription.paymentStatus': 'Paid' } },
+      { $group: { _id: null, monthly: { $sum: '$subscription.amount' } } }
+    ]);
+
+    const planDistribution = await School.aggregate([
+      { $group: { _id: '$subscription.plan', count: { $sum: 1 } } }
+    ]);
+
+    res.json({
+      overview: {
+        totalSchools,
+        activeSchools,
+        trialSchools,
+        expiredSchools,
+        monthlyRevenue: revenueStats[0]?.monthly || 0
+      },
+      planDistribution,
+      riskSchools: await School.find({ 'subscription.status': 'Expiring Soon' }).limit(5)
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -373,12 +551,129 @@ export const deleteSchool = async (req, res) => {
   }
 };
 
+// --- Get System Health ---
+export const getSystemHealth = async (req, res) => {
+  try {
+    const uptime = process.uptime();
+    const memoryUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+    
+    // Database status
+    const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+    
+    // Storage usage (approximate if using local, or Cloudinary stats if integrated)
+    // For now, providing basic server info
+    const serverInfo = {
+      platform: os.platform(),
+      release: os.release(),
+      totalMem: (os.totalmem() / (1024 * 1024 * 1024)).toFixed(2) + ' GB',
+      freeMem: (os.freemem() / (1024 * 1024 * 1024)).toFixed(2) + ' GB',
+      cpus: os.cpus().length
+    };
+
+    // Error rates (from Audit Logs or a dedicated Error log)
+    const AuditLog = (await import('../models/AuditLog.js')).default;
+    const errorsLast24h = await AuditLog.countDocuments({
+      severity: 'critical',
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+    });
+
+    res.json({
+      status: 'Healthy',
+      uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+      database: dbStatus,
+      memory: {
+        heapUsed: (memoryUsage.heapUsed / (1024 * 1024)).toFixed(2) + ' MB',
+        heapTotal: (memoryUsage.heapTotal / (1024 * 1024)).toFixed(2) + ' MB',
+        rss: (memoryUsage.rss / (1024 * 1024)).toFixed(2) + ' MB'
+      },
+      server: serverInfo,
+      monitoring: {
+        errorsLast24h,
+        activeSessions: await User.countDocuments({ 'refreshTokens.0': { $exists: true } })
+      }
+    });
+  } catch (error) {
+    console.error('System Health Error:', error);
+    res.status(500).json({ message: 'Failed to fetch system health' });
+  }
+};
+
+// --- Get Business Analytics ---
+export const getBusinessAnalytics = async (req, res) => {
+  try {
+    const totalSchools = await School.countDocuments();
+    const activeSchools = await School.countDocuments({ isActive: true });
+    
+    // Revenue Trends (last 6 months)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    
+    const revenueTrends = await School.aggregate([
+      {
+        $match: {
+          'subscription.lastPaymentDate': { $gte: sixMonthsAgo },
+          'subscription.paymentStatus': 'Paid'
+        }
+      },
+      {
+        $group: {
+          _id: { 
+            month: { $month: '$subscription.lastPaymentDate' },
+            year: { $year: '$subscription.lastPaymentDate' }
+          },
+          revenue: { $sum: '$subscription.amount' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+
+    // Conversion Rates (Leads to Schools)
+    const totalLeads = await Lead.countDocuments();
+    const convertedLeads = await Lead.countDocuments({ status: 'converted' });
+    
+    // User Engagement (logins last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const activeUsersLast7d = await User.countDocuments({
+      lastLogin: { $gte: sevenDaysAgo }
+    });
+
+    res.json({
+      summary: {
+        totalSchools,
+        activeSchools,
+        totalLeads,
+        conversionRate: totalLeads > 0 ? ((convertedLeads / totalLeads) * 100).toFixed(2) + '%' : '0%',
+        activeUsersLast7d
+      },
+      revenueTrends,
+      supportStats: {
+        openTickets: await SupportTicket.countDocuments({ status: 'open' }),
+        pendingTickets: await SupportTicket.countDocuments({ status: 'in_progress' }),
+        resolvedLast30d: await SupportTicket.countDocuments({ 
+          status: 'resolved',
+          updatedAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        })
+      }
+    });
+  } catch (error) {
+    console.error('Business Analytics Error:', error);
+    res.status(500).json({ message: 'Failed to fetch business analytics' });
+  }
+};
+
 // --- Get Dashboard Stats ---
 export const getDashboardStats = async (req, res) => {
   try {
     const totalSchools = await School.countDocuments();
     const activeSchools = await School.countDocuments({ isActive: true });
     const inactiveSchools = await School.countDocuments({ isActive: false });
+    
+    // Platform-wide counts
+    const totalStudents = await User.countDocuments({ role: 'student' });
+    const totalTeachers = await User.countDocuments({ role: 'teacher' });
     
     // Schools with expired subscriptions
     const expiredSchools = await School.countDocuments({
@@ -431,7 +726,40 @@ export const getDashboardStats = async (req, res) => {
       }
     ]);
 
+    // Top 5 schools by student usage
+    const topSchools = await User.aggregate([
+      { $match: { role: 'student', isDeleted: { $ne: true } } },
+      { $group: { _id: '$school', studentCount: { $sum: 1 } } },
+      { $sort: { studentCount: -1 } },
+      { $limit: 5 },
+      {
+        $lookup: {
+          from: 'schools',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'schoolDetails'
+        }
+      },
+      { $unwind: '$schoolDetails' },
+      {
+        $project: {
+          _id: 1,
+          name: '$schoolDetails.name',
+          subdomain: '$schoolDetails.subdomain',
+          status: '$schoolDetails.subscription.status',
+          studentCount: 1,
+          limit: '$schoolDetails.subscription.limits.students'
+        }
+      }
+    ]);
+
+    // Check maintenance mode status
+    const SystemConfig = (await import('../models/SystemConfig.js')).default;
+    const maintenanceConfig = await SystemConfig.findOne({ key: 'maintenance_mode' });
+
     res.json({
+      success: true,
+      maintenanceMode: maintenanceConfig?.value === true,
       schools: {
         total: totalSchools,
         active: activeSchools,
@@ -445,10 +773,15 @@ export const getDashboardStats = async (req, res) => {
         paid: paidRevenue,
         pending: totalRevenue - paidRevenue
       },
+      platform: {
+        totalStudents,
+        totalTeachers
+      },
       subscriptionTypes: subscriptionTypes.reduce((acc, curr) => {
         acc[curr._id || 'trial'] = curr.count;
         return acc;
-      }, {})
+      }, {}),
+      topSchools
     });
   } catch (error) {
     console.error('Dashboard Stats Error:', error);
@@ -802,16 +1135,16 @@ export const deleteSchoolAdmin = async (req, res) => {
   }
 };
 
-// --- Register School Admin (Super Admin only provides email & password) ---
+// --- Register School Admin (Tenant Creation with Plan Enforcement) ---
 export const createSchoolAdmin = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, planId } = req.body;
 
   try {
     // Validate input
-    if (!email || !password) {
+    if (!email || !password || !planId) {
       return res.status(400).json({
-        message: 'Email and password are required',
-        userMessage: 'Please provide both email and password.'
+        message: 'Missing required fields',
+        userMessage: 'Email, password, and a subscription plan are required.'
       });
     }
 
@@ -824,41 +1157,287 @@ export const createSchoolAdmin = async (req, res) => {
       });
     }
 
-    // Create school admin (no school assigned yet, profile not completed)
-    // NOTE: Don't hash password here - the User model pre-save hook will handle it
-    // Extract name from email prefix as temporary name
+    // Load the Plan
+    const Plan = (await import('../models/Plan.js')).default;
+    const plan = await Plan.findById(planId);
+    if (!plan) {
+      return res.status(404).json({
+        message: 'Plan not found',
+        userMessage: 'The selected subscription plan does not exist.'
+      });
+    }
+
+    // Create the User (School Admin) - NO school linked yet
     const tempName = email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
-    const admin = await User.create({
+    const admin = new User({
       name: tempName,
       email,
-      password, // Pass plain password - pre-save hook will hash it
+      password,
       role: 'schooladmin',
       schoolProfileCompleted: false,
-      status: 'active'
+      isEmailVerified: false,
+      status: 'active',
+      // Store intended plan in metadata for later use during onboarding
+      metadata: { 
+        intendedPlanId: planId 
+      }
+    });
+
+    // Generate Email Verification Token
+    const verificationToken = admin.generateEmailVerificationToken();
+    await admin.save();
+
+    try {
+      // Send Verification Email - CRITICAL: if this fails, we rollback the user!
+      await sendVerificationEmail(admin, verificationToken);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError.stack);
+      // If email fails, delete the user completely
+      await User.findByIdAndDelete(admin._id);
+      return res.status(500).json({
+        message: 'Failed to send verification email',
+        userMessage: 'Failed to send verification email. Please try again later.',
+        error: emailError.message
+      });
+    }
+
+    await logAction(req, {
+      action: 'SCHOOL_ADMIN_CREATED',
+      module: 'SUPER_ADMIN',
+      targetId: admin._id,
+      details: { email, planId }
     });
 
     res.status(201).json({
-      message: 'School admin created successfully',
-      userMessage: 'School admin account created successfully! They can now login and complete their school profile.',
+      success: true,
+      message: 'School Admin created successfully. Verification email sent.',
+      userMessage: 'School Admin account created. A verification email has been sent to the provided address.',
       admin: {
         _id: admin._id,
+        name: admin.name,
         email: admin.email,
-        role: admin.role,
-        schoolProfileCompleted: false
+        role: admin.role
       }
     });
   } catch (error) {
-    console.error('Create School Admin Error:', error);
-    console.error('Error details:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      code: error.code
-    });
+    console.error('Create School Admin Error:', error.stack);
     res.status(500).json({
-      message: `Failed to create school admin: ${error.message}`,
-      userMessage: `Failed to create school admin: ${error.message}`
+      message: 'Failed to create school admin',
+      userMessage: 'Failed to create school admin. Please try again.'
     });
   }
 };
+
+// --- Safe Plan Upgrade ---
+export const upgradeSchoolPlan = async (req, res) => {
+  try {
+    const { id } = req.params; // School ID
+    const { newPlanId, reason } = req.body;
+
+    if (!newPlanId) {
+      return res.status(400).json({
+        message: 'New plan ID is required',
+        userMessage: 'Please select a new plan to upgrade to.'
+      });
+    }
+
+    const school = await School.findById(id).populate('subscription.plan');
+    if (!school) {
+      return res.status(404).json({
+        message: 'School not found',
+        userMessage: 'School not found.'
+      });
+    }
+
+    const Plan = (await import('../models/Plan.js')).default;
+    const newPlan = await Plan.findById(newPlanId);
+    if (!newPlan) {
+      return res.status(404).json({
+        message: 'Plan not found',
+        userMessage: 'The selected plan does not exist.'
+      });
+    }
+
+    const previousPlanName = school.subscription.plan ? school.subscription.plan.name : 'None';
+
+    // Safely update ONLY the subscription configuration and limits
+    school.subscription.plan = newPlan._id;
+    
+    // Sync features
+    if (newPlan.features && newPlan.features.length > 0) {
+      school.settings.enabledModules = [...newPlan.features];
+    }
+
+    school.subscription.limits = {
+      students: newPlan.limits.students,
+      teachers: newPlan.limits.teachers,
+      branches: newPlan.limits.branches,
+      admins: newPlan.limits.admins,
+      storage: newPlan.limits.storage,
+      sms: newPlan.limits.sms,
+      email: newPlan.limits.email
+    };
+    // Extend end date by 1 year from now for upgrades (or based on business logic)
+    const newEndDate = new Date();
+    newEndDate.setFullYear(newEndDate.getFullYear() + 1);
+    school.subscription.endDate = newEndDate;
+    school.subscription.status = 'Active';
+
+    await school.save();
+
+    // Create Audit Log
+    await logAction(req, {
+      action: 'PLAN_UPGRADED',
+      module: 'SaaS',
+      details: {
+        previousPlanName,
+        newPlanName: newPlan.name,
+        reason: reason || 'N/A',
+        newLimits: newPlan.limits
+      },
+      targetId: school._id,
+      oldValue: school.subscription.plan,
+      newValue: newPlan._id
+    });
+
+    res.json({
+      message: 'Plan upgraded safely',
+      userMessage: `Successfully upgraded ${school.name} to the ${newPlan.name} plan. Existing data was preserved.`,
+      school
+    });
+  } catch (error) {
+    console.error('Upgrade Plan Error:', error);
+    res.status(500).json({
+      message: `Failed to upgrade plan: ${error.message}`,
+      userMessage: 'Failed to upgrade the plan due to a server error.'
+    });
+  }
+};
+
+// --- Get all subscriptions (with approval status filter) ---
+export const getSubscriptions = async (req, res) => {
+  try {
+    const { status, approval, search, page = 1, limit = 50 } = req.query;
+
+    const query = {};
+
+    if (approval && approval !== 'all') {
+      query['subscription.approvalStatus'] = approval;
+    }
+
+    if (status && status !== 'all') {
+      if (status === 'active') query.isActive = true;
+      if (status === 'inactive') query.isActive = false;
+      if (status === 'blocked') query['subscription.blockedByAdmin'] = true;
+    }
+
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { subdomain: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await School.countDocuments(query);
+
+    const schools = await School.find(query)
+      .populate('subscription.plan', 'name code limits monthlyPrice yearlyPrice')
+      .populate('subscription.approvedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean({ virtuals: true });
+
+    // Add virtual fields
+    const withVirtuals = schools.map(s => ({
+      ...s,
+      isSubscriptionExpired: s.subscription?.endDate ? new Date() > new Date(s.subscription.endDate) : false,
+      daysUntilExpiry: s.subscription?.endDate
+        ? Math.ceil((new Date(s.subscription.endDate) - new Date()) / (1000 * 60 * 60 * 24))
+        : null,
+    }));
+
+    res.json({
+      message: 'Subscriptions retrieved',
+      data: {
+        subscriptions: withVirtuals,
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+      }
+    });
+  } catch (error) {
+    console.error('Get Subscriptions Error:', error);
+    res.status(500).json({
+      message: `Failed to retrieve subscriptions: ${error.message}`,
+      userMessage: 'Failed to load subscriptions.'
+    });
+  }
+};
+
+// --- Approve or Deny a school subscription ---
+export const reviewSubscription = async (req, res) => {
+  const { id } = req.params; // School ID
+  const { action, note } = req.body; // action: 'approve' | 'deny'
+
+  try {
+    if (!['approve', 'deny'].includes(action)) {
+      return res.status(400).json({
+        message: 'Invalid action',
+        userMessage: 'Action must be either "approve" or "deny".'
+      });
+    }
+
+    const school = await School.findById(id);
+    if (!school) {
+      return res.status(404).json({
+        message: 'School not found',
+        userMessage: 'The specified school tenant was not found.'
+      });
+    }
+
+    if (action === 'approve') {
+      school.subscription.approvalStatus = 'approved';
+      school.subscription.status = school.subscription.status === 'Trial' ? 'Active' : school.subscription.status;
+      school.subscription.approvedAt = new Date();
+      school.subscription.approvedBy = req.user._id;
+      school.subscription.approvalNote = note || '';
+      school.isActive = true;
+    } else {
+      school.subscription.approvalStatus = 'denied';
+      school.subscription.approvalNote = note || 'Subscription denied by administrator.';
+      school.subscription.approvedAt = new Date();
+      school.subscription.approvedBy = req.user._id;
+      // Optionally deactivate the school on denial
+      school.subscription.blockedByAdmin = true;
+      school.subscription.blockedReason = note || 'Subscription request denied.';
+    }
+
+    await school.save();
+
+    const AuditLog = (await import('../models/AuditLog.js')).default;
+    await AuditLog.create({
+      school: school._id,
+      user: req.user._id,
+      action: action === 'approve' ? 'SUBSCRIPTION_APPROVED' : 'SUBSCRIPTION_DENIED',
+      details: `Subscription ${action}d for ${school.name}. Note: ${note || 'N/A'}`,
+      ipAddress: req.ip
+    });
+
+    res.json({
+      message: `Subscription ${action}d`,
+      userMessage: `Subscription for "${school.name}" has been ${action}d successfully.`,
+      school
+    });
+  } catch (error) {
+    console.error('Review Subscription Error:', error);
+    res.status(500).json({
+      message: `Failed to review subscription: ${error.message}`,
+      userMessage: 'A server error occurred while processing the subscription review.'
+    });
+  }
+};
+

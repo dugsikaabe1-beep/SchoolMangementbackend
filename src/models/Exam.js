@@ -18,10 +18,21 @@ const examSchema = new mongoose.Schema(
       default: 'Scheduled' 
     },
     requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
+    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    academicYear: { type: String, required: true, index: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }
 );
+
+// Index for multi-tenant and multi-branch queries
+examSchema.index({ school: 1, branch: 1, academicYear: 1 });
+examSchema.index({ school: 1, branch: 1, deletedAt: 1 });
 
 const Exam = mongoose.model('Exam', examSchema);
 export default Exam;

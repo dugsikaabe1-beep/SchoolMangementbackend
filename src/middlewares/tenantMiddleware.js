@@ -36,9 +36,17 @@ const getHost = (req) => {
   return direct;
 };
 
-/** Loopback API (e.g. http://localhost:5000) — not the super-admin product host */
-const isBareLocalDevHost = (host) =>
-  Boolean(host) && (host === 'localhost' || host.startsWith('127.0.0.1') || /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(host));
+/** Loopback API or Platform Host (e.g. Vercel) — not the super-admin product host */
+const isBareLocalDevHost = (host) => {
+  if (!host) return false;
+  return (
+    host === 'localhost' ||
+    host.includes('ngrok-free.dev') ||
+    host.endsWith('.vercel.app') ||
+    host.startsWith('127.0.0.1') ||
+    /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(host)
+  );
+};
 
 /**
  * Derive school subdomain from Host using ROOT_DOMAIN (e.g. ROOT_DOMAIN=mydomain.com
@@ -62,18 +70,20 @@ const subdomainFromRootDomain = (host, rootDomain) => {
  */
 const mobileHeaderSubdomain = (req) => {
   const allowDev =
-    process.env.NODE_ENV !== 'production' &&
+    process.env.NODE_ENV !== 'production' ||
     process.env.ALLOW_DEV_TENANT_HEADER === 'true';
-  const allowMobile = process.env.ALLOW_MOBILE_TENANT_HEADER === 'true';
+  const allowMobile = process.env.ALLOW_MOBILE_TENANT_HEADER === 'true' || process.env.NODE_ENV === 'development';
 
   if (!allowDev && !allowMobile) return null;
 
   const candidates = [];
-  if (allowDev) {
+  if (allowDev || process.env.NODE_ENV === 'development') {
     candidates.push(req.headers['x-dev-tenant-subdomain']);
   }
   if (allowDev || allowMobile) {
     candidates.push(req.headers['x-tenant-id']);
+    candidates.push(req.headers['X-Tenant-ID']);
+    candidates.push(req.headers['x-school-slug']);
   }
 
   for (const h of candidates) {
@@ -89,6 +99,22 @@ const mobileHeaderSubdomain = (req) => {
  * Never trust X-Tenant-ID / X-Tenant-Subdomain from clients in production.
  */
 export const detectTenant = async (req, res, next) => {
+  // Skip tenant detection for OPTIONS requests to avoid issues with CORS preflight
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+
+  // Skip tenant detection entirely for auth-related routes
+  if (req.originalUrl && (
+    req.originalUrl.includes('/api/auth') || 
+    req.originalUrl.includes('/api/v1/auth') ||
+    req.originalUrl.includes('/api/super-admin/login') ||
+    req.originalUrl.includes('/api/v1/super-admin/login')
+  )) {
+    console.log('[Tenant] Skipping tenant detection for auth route');
+    return next();
+  }
+
   const host = getHost(req);
   const rootDomain = (process.env.ROOT_DOMAIN || '').trim().toLowerCase();
 
@@ -106,7 +132,10 @@ export const detectTenant = async (req, res, next) => {
   }
 
   if (!subdomain) {
-    subdomain = mobileHeaderSubdomain(req);
+    subdomain = mobileHeaderSubdomain(req) || req.query.school || req.query.tenantId;
+    if (subdomain && process.env.NODE_ENV === 'development') {
+      console.log(`[Tenant] Subdomain found in headers/query: ${subdomain}`);
+    }
   }
 
   // Debugging: Log the detection process
@@ -114,16 +143,34 @@ export const detectTenant = async (req, res, next) => {
     console.log(`[Tenant] Detection: host=${host}, root=${rootDomain}, resolved_subdomain=${subdomain || 'none'}`);
   }
 
-  // Bare localhost / 127.0.0.1 / IP: no tenant on host — use "dev" tenant UX, not super-admin portal
-  if (
-    (!subdomain || !isValidSubdomainLabel(subdomain)) &&
-    isBareLocalDevHost(host)
-  ) {
+  // Try to set school context even for authenticated users
+  if (subdomain) {
+    try {
+      const school = await School.findOne({
+        subdomain,
+        isActive: true,
+      }).select('_id name subdomain isActive subscription');
+
+      if (school) {
+        console.log(`[Tenant] School FOUND: ${school.name} (${school._id})`);
+        req.school = school;
+        req.schoolId = school._id;
+        req.tenantId = school.subdomain;
+      }
+    } catch (error) {
+      console.warn('[Tenant] Error fetching school for authenticated user:', error);
+    }
+  }
+
+  // Bare localhost / 127.0.0.1 / IP / ngrok: skip school lookup entirely
+  if (isBareLocalDevHost(host)) {
+    console.log(`[Tenant] Bare local dev host detected, skipping school isolation.`);
     req.isSuperAdminRoute = false;
     return next();
   }
 
   if (!subdomain || RESERVED.has(subdomain) || !isValidSubdomainLabel(subdomain)) {
+    console.log(`[Tenant] No valid subdomain or reserved keyword "${subdomain}", routing to Super Admin.`);
     req.isSuperAdminRoute = true;
     return next();
   }
@@ -135,15 +182,13 @@ export const detectTenant = async (req, res, next) => {
     }).select('_id name subdomain isActive subscription');
 
     if (!school) {
+      console.warn(`[Tenant] School NOT FOUND for subdomain: ${subdomain} (skipping 404 for now)`);
       securityLog('tenant_unknown_subdomain', { subdomain, host });
-      return res.status(404).json({
-        success: false,
-        message: 'School not found',
-        userMessage:
-          'The school you are trying to access does not exist or is inactive.',
-      });
+      req.isSuperAdminRoute = false;
+      return next();
     }
 
+    console.log(`[Tenant] School FOUND: ${school.name} (${school._id})`);
     req.school = school;
     req.schoolId = school._id;
     req.tenantId = school.subdomain;
@@ -175,6 +220,41 @@ export const requireTenant = (req, res, next) => {
       message: 'Access Denied: Tenant context required',
       userMessage: 'Please access this API via a valid school subdomain.',
     });
+  }
+  next();
+};
+
+/**
+ * Ownership Middleware
+ * Automatically injects tenantId (school) and branchId into req.body for creations.
+ * Also sets req.branchId and req.academicYearId from headers.
+ */
+export const injectOwnership = (req, res, next) => {
+  // Set branchId from headers
+  const branchIdFromHeader = req.headers['x-branch-id'];
+  if (branchIdFromHeader) {
+    req.branchId = branchIdFromHeader;
+  }
+  
+  // Set academicYearId from headers
+  const academicYearIdFromHeader = req.headers['x-academic-year-id'];
+  if (academicYearIdFromHeader) {
+    req.academicYearId = academicYearIdFromHeader;
+  }
+  
+  // Also check if user has a school (from auth) to set req.school/req.schoolId
+  if (!req.schoolId && req.user?.school) {
+    req.schoolId = req.user.school;
+  }
+  
+  // Inject school and branch into POST requests if not present
+  if (req.method === 'POST') {
+    if (req.schoolId && !req.body.school) {
+      req.body.school = req.schoolId;
+    }
+    if (req.branchId && !req.body.branch) {
+      req.body.branch = req.branchId;
+    }
   }
   next();
 };

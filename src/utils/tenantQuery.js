@@ -16,12 +16,18 @@ export const schoolScope = (req) => {
 };
 
 /**
- * Merge arbitrary filter with mandatory school scope.
+ * Merge arbitrary filter with mandatory school scope and optional branch scope.
  */
-export const withSchool = (req, query = {}) => ({
-  ...query,
-  school: req.schoolId,
-});
+export const withSchool = (req, query = {}) => {
+  const filter = { ...query, school: req.schoolId };
+  
+  // If branch isolation is active on the request, apply it
+  if (req.branchId) {
+    filter.branch = req.branchId;
+  }
+  
+  return filter;
+};
 
 /**
  * Build `{ school, ...query }` when school is stored as ObjectId ref `school`.
@@ -30,7 +36,14 @@ export const tenantFilter = (req, extra = {}) => {
   if (!req?.schoolId) {
     throw new Error('CRITICAL SECURITY ERROR: tenant filter without schoolId');
   }
-  return { ...extra, school: req.schoolId };
+  
+  const filter = { ...extra, school: req.schoolId };
+  
+  if (req.branchId) {
+    filter.branch = req.branchId;
+  }
+  
+  return filter;
 };
 
 /**

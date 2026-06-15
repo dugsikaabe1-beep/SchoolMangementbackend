@@ -1,20 +1,31 @@
-import User from '../models/User.js';
 import Class from '../models/Class.js';
 import ClassSubject from '../models/ClassSubject.js';
 import Attendance from '../models/Attendance.js';
+import User from '../models/User.js';
+import { sendNotification } from '../utils/notificationService.js';
 import Mark from '../models/Mark.js';
 import Exam from '../models/Exam.js';
 import Schedule from '../models/Schedule.js';
 import ExamSession from '../models/ExamSession.js';
 
+const getScope = (req) => ({
+  schoolId: req.user.school?._id || req.user.school,
+  branchId: req.branchId || req.user.branch?._id || req.user.branch,
+});
+
 // --- View Assigned Classes ---
 export const getAssignedClasses = async (req, res) => {
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
-    const assignments = await ClassSubject.find({
+    const query = {
       teacher: req.user._id,
       school: schoolId,
-    }).populate('class');
+    };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getAssignedClasses: teacher=${req.user._id}, school=${schoolId}, branch=${branchId}`);
+
+    const assignments = await ClassSubject.find(query).populate('class');
 
     // Get unique classes from assignments
     const classesMap = new Map();
@@ -37,7 +48,7 @@ export const getAssignedClasses = async (req, res) => {
 // --- Take Attendance ---
 export const takeAttendance = async (req, res) => {
   const { classId, subjectId, studentsAttendance, date } = req.body; 
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -47,6 +58,7 @@ export const takeAttendance = async (req, res) => {
       class: classId,
       subject: subjectId,
       school: schoolId,
+      branch: branchId,
       date: {
         $gte: today,
         $lte: new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1)
@@ -71,6 +83,7 @@ export const takeAttendance = async (req, res) => {
         class: classId,
         subject: subjectId,
         school: schoolId,
+        branch: branchId,
         date: {
           $gte: today,
           $lte: new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1)
@@ -83,6 +96,7 @@ export const takeAttendance = async (req, res) => {
       subject: subjectId,
       class: classId,
       school: schoolId,
+      branch: branchId,
     });
     
     if (!classSubjectAssignment) {
@@ -99,6 +113,7 @@ export const takeAttendance = async (req, res) => {
         class: classId,
         teacher: req.user._id,
         school: schoolId,
+        branch: branchId,
       });
       if (!isAssigned) {
         return res.status(403).json({ 
@@ -115,10 +130,34 @@ export const takeAttendance = async (req, res) => {
       class: classId,
       subject: subjectId,
       school: schoolId,
+      branch: branchId,
       markedBy: req.user._id,
     }));
 
     await Attendance.insertMany(attendanceRecords);
+
+    // Notify Parents of Absentees
+    const absentees = attendanceRecords.filter(r => r.status === 'Absent');
+    for (const record of absentees) {
+      const student = await User.findById(record.user);
+      if (student) {
+        const title = '🔔 Attendance Alert: Absent';
+        const message = `Your child ${student.name} was marked absent today (${new Date(record.date).toLocaleDateString()}).`;
+        
+        const parents = await User.find({ role: 'parent', linkedStudents: student._id, school: schoolId, branch: branchId });
+        for (const parent of parents) {
+          await sendNotification({
+            recipientId: parent._id,
+            schoolId,
+            branchId: parent.branch,
+            title,
+            message,
+            type: 'attendance'
+          });
+        }
+      }
+    }
+
     res.status(201).json({ 
       message: 'Attendance recorded successfully',
       userMessage: 'Attendance recorded successfully.'
@@ -134,7 +173,7 @@ export const takeAttendance = async (req, res) => {
 // --- View Class Attendance ---
 export const getClassAttendance = async (req, res) => {
   const { classId, subjectId, date } = req.params;
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     const query = {
       class: classId,
@@ -143,6 +182,7 @@ export const getClassAttendance = async (req, res) => {
         $lte: new Date(new Date(date).setHours(23, 59, 59)),
       },
       school: schoolId,
+      branch: branchId,
     };
 
     if (subjectId) {
@@ -161,7 +201,7 @@ export const getClassAttendance = async (req, res) => {
 // --- Submit Marks ---
 export const submitMarks = async (req, res) => {
   const { subjectId, classId, examType, studentMarks } = req.body; 
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   // examType: 'monthly1', 'midterm', 'monthly2', 'final'
   // studentMarks: [{ studentId, score, remarks }]
   try {
@@ -182,6 +222,7 @@ export const submitMarks = async (req, res) => {
         teacher: req.user._id,
         class: classId,
         school: schoolId,
+        branch: branchId,
       });
       if (!isAssigned) {
         console.log(`Teacher ${req.user._id} assignment check failed: Subject=${subjectId}, Class=${classId}`);
@@ -207,7 +248,8 @@ export const submitMarks = async (req, res) => {
       subject: actualSubjectId,
       class: classId,
       term: termToEnum[examType],
-      school: schoolId
+      school: schoolId,
+      branch: branchId,
     });
 
     if (!examRecord) {
@@ -223,7 +265,8 @@ export const submitMarks = async (req, res) => {
         name: termToSessionName[examType],
         classes: classId,
         subjects: actualSubjectId,
-        school: schoolId
+        school: schoolId,
+        branch: branchId,
       });
 
       if (!session) {
@@ -247,7 +290,7 @@ export const submitMarks = async (req, res) => {
     // Update or insert marks for each student
     for (const item of studentMarks) {
       await Mark.findOneAndUpdate(
-        { student: item.studentId, subject: actualSubjectId, class: classId, school: schoolId },
+        { student: item.studentId, subject: actualSubjectId, class: classId, school: schoolId, branch: branchId },
         { 
           $set: {
             [examType]: item.score || 0,
@@ -256,7 +299,8 @@ export const submitMarks = async (req, res) => {
             school: schoolId,
             student: item.studentId,
             subject: actualSubjectId,
-            class: classId
+            class: classId,
+            branch: branchId
           }
         },
         { upsert: true, new: true }
@@ -272,12 +316,13 @@ export const submitMarks = async (req, res) => {
 // --- Get existing marks for a class + subject (for pre-filling marks entry) ---
 export const getClassSubjectMarks = async (req, res) => {
   const { classId, subjectId } = req.params;
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     const marks = await Mark.find({
       class: classId,
       subject: subjectId,
-      school: schoolId
+      school: schoolId,
+      branch: branchId,
     }).select('student monthly1 midterm monthly2 final remarks');
     // Return as a map: { studentId: { monthly1, midterm, monthly2, final, remarks } }
     const marksMap = {};
@@ -299,9 +344,14 @@ export const getClassSubjectMarks = async (req, res) => {
 // --- View Students List ---
 export const getStudentsInClass = async (req, res) => {
   const { classId } = req.params;
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
-    const students = await User.find({ role: 'student', class: classId, school: schoolId });
+    const query = { role: 'student', class: classId, school: schoolId };
+    if (branchId) query.branch = branchId;
+    
+    console.log(`[DEBUG] getStudentsInClass: class=${classId}, school=${schoolId}, branch=${branchId}`);
+
+    const students = await User.find(query);
     res.json(students);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -310,9 +360,9 @@ export const getStudentsInClass = async (req, res) => {
 
 // --- View Schedule ---
 export const getTeacherSchedule = async (req, res) => {
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
-    const schedules = await Schedule.find({ teacher: req.user._id, school: schoolId })
+    const schedules = await Schedule.find({ teacher: req.user._id, school: schoolId, branch: branchId })
       .populate('class', 'name section')
       .populate('subject', 'name code')
       .sort({ day: 1, startTime: 1 });
@@ -325,11 +375,12 @@ export const getTeacherSchedule = async (req, res) => {
 
 // --- View Taught Subjects ---
 export const getTaughtSubjects = async (req, res) => {
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     const rows = await ClassSubject.find({
       teacher: req.user._id,
       school: schoolId,
+      branch: branchId,
     }).populate('subject').populate('class');
 
     const subjects = rows
@@ -353,11 +404,12 @@ export const getTaughtSubjects = async (req, res) => {
 
 // --- View Exams for their subjects ---
 export const getExams = async (req, res) => {
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     const assignments = await ClassSubject.find({
       teacher: req.user._id,
       school: schoolId,
+      branch: branchId,
     });
     
     // Get unique subject-class pairs the teacher is assigned to
@@ -373,12 +425,14 @@ export const getExams = async (req, res) => {
     // 1. Get legacy individual exams
     const legacyExams = await Exam.find({ 
       school: schoolId,
+      branch: branchId,
       status: { $in: ['Published', 'Scheduled', 'Active', 'Completed'] } 
     }).populate('subject').populate('class');
 
     // 2. Get modern ExamSessions and convert them to virtual Exam objects
     const sessions = await ExamSession.find({
       school: schoolId,
+      branch: branchId,
       status: { $in: ['Published', 'Scheduled', 'Active', 'Completed'] }
     }).populate('subjects').populate('classes');
 
@@ -434,9 +488,9 @@ export const getExams = async (req, res) => {
 // --- Mark Exam as Present ---
 export const markExamAsPresent = async (req, res) => {
   const { examId } = req.params;
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
-    const exam = await Exam.findOne({ _id: examId, school: schoolId });
+    const exam = await Exam.findOne({ _id: examId, school: schoolId, branch: branchId });
     if (!exam) {
       return res.status(404).json({ message: 'Exam not found' });
     }
@@ -447,6 +501,7 @@ export const markExamAsPresent = async (req, res) => {
       class: exam.class,
       teacher: req.user._id,
       school: schoolId,
+      branch: branchId,
     });
     if (!subject) {
       return res.status(403).json({ message: 'You are not authorized to manage this exam' });
@@ -463,14 +518,15 @@ export const markExamAsPresent = async (req, res) => {
 // --- Request an Exam ---
 export const requestExam = async (req, res) => {
   const { name, term, date, classId, subjectId, maxMarks } = req.body;
-  const schoolId = req.user.school?._id || req.user.school;
+  const { schoolId, branchId } = getScope(req);
   try {
     // Validate if teacher is assigned to this class and subject
     const isAssigned = await ClassSubject.findOne({
       class: classId,
       subject: subjectId,
       teacher: req.user._id,
-      school: schoolId
+      school: schoolId,
+      branch: branchId,
     });
 
     if (!isAssigned) {
@@ -489,7 +545,8 @@ export const requestExam = async (req, res) => {
       maxMarks: maxMarks || 100,
       status: 'Pending',
       requestedBy: req.user._id,
-      school: schoolId
+      school: schoolId,
+      branch: branchId
     });
 
     res.status(201).json({

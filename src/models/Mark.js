@@ -13,11 +13,19 @@ const markSchema = new mongoose.Schema(
     final: { type: Number, default: 0 },
     total: { type: Number, default: 0 },
     remarks: { type: String, default: '' },
-    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
+    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    academicYear: { type: String, required: true, index: true },
     gradedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }
 );
+
+// Index for multi-tenant and multi-branch queries
+markSchema.index({ school: 1, branch: 1, academicYear: 1, class: 1, subject: 1 });
 
 // Auto-calculate total before save
 markSchema.pre('save', function () {

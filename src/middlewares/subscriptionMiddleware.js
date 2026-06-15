@@ -12,6 +12,21 @@ export const checkSubscription = async (req, res, next) => {
       return next();
     }
 
+    // Exempt school profile completion routes
+    const exemptPaths = [
+      '/api/v1/admin/school-profile-status',
+      '/api/v1/admin/complete-school-profile',
+      '/api/admin/school-profile-status',
+      '/api/admin/complete-school-profile',
+      '/api/v1/school-admin/profile-status',
+      '/api/v1/school-admin/complete-profile',
+      '/api/school-admin/profile-status',
+      '/api/school-admin/complete-profile'
+    ];
+    if (exemptPaths.some(path => req.path.startsWith(path) || req.originalUrl.startsWith(path))) {
+      return next();
+    }
+
     // Skip if user doesn't have a school (shouldn't happen for school users)
     if (!req.user?.school) {
       return res.status(403).json({
@@ -47,26 +62,46 @@ export const checkSubscription = async (req, res, next) => {
       });
     }
 
-    // Check subscription expiration
+    // Check subscription expiration with configurable grace period
     if (school.subscription?.endDate) {
       const now = new Date();
       const endDate = new Date(school.subscription.endDate);
-      
-      if (now > endDate) {
+      const graceDays = school.settings?.gracePeriodDays ?? 7;
+      const graceEnd = new Date(endDate);
+      graceEnd.setDate(graceEnd.getDate() + graceDays);
+
+      if (now > graceEnd) {
         return res.status(403).json({
           message: 'Subscription expired',
-          userMessage: 'Your subscription has expired. Please contact the administrator to renew your subscription.'
+          userMessage: 'Your subscription has expired. Please contact the administrator to renew your subscription.',
         });
       }
 
-      // Optional: Warn if subscription expires soon (e.g., 7 days)
-      const daysUntilExpiry = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
-      if (daysUntilExpiry <= 7 && daysUntilExpiry > 0) {
-        // Attach warning to request for controllers to use
+      if (now > endDate) {
+        req.subscriptionRestricted = true;
         req.subscriptionWarning = {
-          daysUntilExpiry,
-          message: `Your subscription will expire in ${daysUntilExpiry} day${daysUntilExpiry > 1 ? 's' : ''}. Please renew soon.`
+          daysUntilExpiry: 0,
+          inGracePeriod: true,
+          message: `Subscription expired. Grace period ends on ${graceEnd.toLocaleDateString()}.`,
         };
+
+        const readOnlyPrefixes = ['/api/admin/finance', '/api/v1/admin/finance'];
+        const isWrite = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method);
+        const isFinanceWrite = isWrite && readOnlyPrefixes.some((p) => req.originalUrl.startsWith(p));
+        if (isFinanceWrite && school.settings?.restrictedModeOnExpiry !== false) {
+          return res.status(403).json({
+            message: 'Subscription grace period - restricted mode',
+            userMessage: 'Your subscription is in grace period. Finance changes are restricted until renewal.',
+          });
+        }
+      } else {
+        const daysUntilExpiry = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+        if (daysUntilExpiry <= 7 && daysUntilExpiry > 0) {
+          req.subscriptionWarning = {
+            daysUntilExpiry,
+            message: `Your subscription will expire in ${daysUntilExpiry} day${daysUntilExpiry > 1 ? 's' : ''}. Please renew soon.`,
+          };
+        }
       }
     }
 

@@ -43,8 +43,15 @@ export const adminLoginBodySchema = z.object({
 
 export const credLoginSchema = z.object({
   body: z.object({
-    customId: z.string().min(1, 'ID is required').max(64),
+    customId: z.string().min(1, 'ID is required').max(64).optional(),
+    phone: z.string().min(1, 'Phone is required').max(32).optional(),
+    email: z.string().email('Invalid email').max(120).optional(),
     password: z.string().min(1, 'Password is required').max(200),
+    tenantId: z.string().max(64).optional(),
+    branchId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid Branch ID').optional(),
+  }).refine((body) => Boolean(body.customId || body.phone || body.email), {
+    message: 'ID, phone, or email is required',
+    path: ['customId'],
   }),
 });
 

@@ -5,7 +5,14 @@ const examHallSchema = new mongoose.Schema(
     school: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'School', 
-      required: true 
+      required: true,
+      index: true
+    },
+    branch: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Branch', 
+      required: true,
+      index: true
     },
     name: { 
       type: String, 
@@ -42,13 +49,17 @@ const examHallSchema = new mongoose.Schema(
       type: String,
       enum: ['Morning', 'Afternoon', 'Evening'],
       default: 'Morning'
-    }
+    },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    deletedAt: { type: Date },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }
 );
 
-// Unique hall name per school per session per date
-examHallSchema.index({ school: 1, name: 1, examDate: 1, examSession: 1 }, { unique: true });
+// Unique hall name per school per branch per session per date
+examHallSchema.index({ school: 1, branch: 1, name: 1, examDate: 1, examSession: 1 }, { unique: true });
 
 const ExamHall = mongoose.model('ExamHall', examHallSchema);
 export default ExamHall;

@@ -1,3 +1,4 @@
+// School Management Backend
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -13,35 +14,161 @@ import { fileURLToPath } from 'url';
 import { getValidationErrors, mapErrorMessage } from './utils/errorMapper.js';
 import { ensureUserMessage } from './utils/errorMessageMapper.js';
 import { parseAllowedOrigins, originMatcher } from './config/corsConfig.js';
+import { checkMaintenanceMode } from './middlewares/maintenanceMiddleware.js';
+import { requireProfileCompletion } from './middlewares/profileCompletionMiddleware.js';
 
 // Load environment variables
 dotenv.config();
+
+import { injectAcademicYear } from './utils/academicUtils.js';
+import { apiActivityMiddleware } from './middlewares/apiActivityMiddleware.js';
+
+// Initialize Express app
+const app = express();
+
+// --- 1. GLOBAL SECURITY & CORS MIDDLEWARE ---
+
+const allowedOrigins = parseAllowedOrigins();
+const corsOptions = {
+  origin: (origin, callback) => {
+    // 1. Allow if no origin (non-browser)
+    if (!origin) return callback(null, true);
+
+    // 2. Explicitly allow the known frontend origin
+    if (origin === 'https://dugsihub-lilac.vercel.app') {
+      return callback(null, true);
+    }
+
+    // 3. In development, be very permissive
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
+    // 4. Use the registry matcher
+    return originMatcher(allowedOrigins || [])(origin, callback);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'x-tenant-id',
+    'X-Tenant-ID',
+    'x-school-slug',
+    'X-School-Slug',
+    'x-dev-tenant-subdomain',
+    'X-Dev-Tenant-Subdomain',
+    'x-branch-id',
+    'X-Branch-ID',
+    'x-academic-year-id',
+    'X-Academic-Year-ID',
+    'X-Requested-With',
+    'ngrok-skip-browser-warning',
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  optionsSuccessStatus: 200,
+};
+
+// 1.1 Handle CORS and Preflight FIRST
+if (process.env.NODE_ENV === 'development') {
+  // Manual CORS — always works, no package quirks with ngrok
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] ||
+        'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with, ngrok-skip-browser-warning'
+    );
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+} else {
+  app.use(cors(corsOptions));
+}
+
+// Explicitly handle preflight and ngrok stability
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Define allowed patterns for manual header setting (backup to cors middleware)
+  const isAllowedOrigin = 
+    origin === 'https://dugsihub-lilac.vercel.app' || 
+    (origin && origin.startsWith('http://localhost:')) ||
+    (origin && origin.includes('ngrok-free.dev'));
+
+  if (isAllowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with, ngrok-skip-browser-warning');
+  }
+
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Standard ngrok warning skip
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  next();
+});
+
+// 1.2 Debug logging for CORS
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'development') {
+    const origin = req.headers.origin;
+    if (origin) {
+      console.log(`[CORS-Debug] ${req.method} ${req.originalUrl} | Origin: ${origin}`);
+    }
+  }
+  // Standard ngrok warning skip
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  next();
+});
+
+// 1.3 Maintenance Mode Check
+app.use(checkMaintenanceMode);
+
+// 1.4 Trust Proxy
+if (process.env.TRUST_PROXY === '1') {
+  app.set('trust proxy', 1);
+}
 
 // Import routes
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import teacherRoutes from './routes/teacherRoutes.js';
 import studentRoutes from './routes/studentRoutes.js';
+import parentRoutes from './routes/parentRoutes.js';
 import superAdminRoutes from './routes/superAdminRoutes.js';
 import schoolAdminRoutes from './routes/schoolAdminRoutes.js';
 import schoolProfileRoutes from './routes/schoolProfileRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import schoolPublicContentRoutes from './routes/schoolPublicContentRoutes.js';
 import mobileRoutes from './routes/mobileRoutes.js';
+import branchRoutes from './routes/branchRoutes.js';
+import academicRoutes from './routes/academicRoutes.js';
+import subscriptionRoutes from './routes/subscriptionRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import rbacRoutes from './routes/rbacRoutes.js';
+import enterpriseRoutes from './routes/enterpriseRoutes.js';
+import searchRoutes from './routes/searchRoutes.js';
+import onboardingRoutes from './routes/onboardingRoutes.js';
+import schoolFeatureRoutes from './routes/schoolFeatureRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { detectTenant } from './middlewares/tenantMiddleware.js';
-
-// Initialize Express app
-const app = express();
-
-if (process.env.TRUST_PROXY === '1') {
-  app.set('trust proxy', 1);
-}
-
-// --- 1. GLOBAL SECURITY MIDDLEWARE ---
+import { detectTenant, injectOwnership } from './middlewares/tenantMiddleware.js';
 
 // Security Headers (Helmet)
 app.use(helmet({
@@ -50,43 +177,28 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:", "res.cloudinary.com"],
-      connectSrc: ["'self'", "https://api.cloudinary.com"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "https://residence-rarity-itunes.ngrok-free.dev"],
     },
   },
 }));
 
-// CORS — explicit allow-list via CORS_ALLOWED_ORIGINS (see config/corsConfig.js)
-const allowedOrigins = parseAllowedOrigins();
-if (!allowedOrigins) {
-  console.error('Refusing to start: configure CORS_ALLOWED_ORIGINS for production.');
-  process.exit(1);
-}
-
-app.use(
-  cors({
-    origin: originMatcher(allowedOrigins),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'x-tenant-id',
-      'X-Tenant-ID',
-      'x-dev-tenant-subdomain',
-      'X-Dev-Tenant-Subdomain',
-    ],
-  })
-);
+// Body Parsing & Sanitization
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(cookieParser());
 
 // Rate Limiting - Prevent API Abuse
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // Increased to 1000
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.originalUrl?.startsWith('/api/health'),
+  skip: (req) => 
+    req.originalUrl?.startsWith('/api/health') || 
+    req.method === 'OPTIONS' ||
+    req.headers.origin === 'https://dugsihub-lilac.vercel.app',
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'
@@ -96,19 +208,15 @@ app.use('/api/', apiLimiter);
 
 // Auth Rate Limiting - Prevent Brute Force
 const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20, // limit each IP to 20 login attempts per hour
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  skip: (req) => req.method === 'OPTIONS',
   message: {
     success: false,
     message: 'Too many login attempts, please try again in an hour'
   }
 });
 app.use('/api/auth/login', authLimiter);
-
-// Body Parsing & Sanitization
-app.use(express.json({ limit: '1mb' })); // Limit body size to 1MB
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-app.use(cookieParser());
 
 // Prevent MongoDB Injection
 app.use(mongoSanitize());
@@ -126,6 +234,12 @@ if (process.env.NODE_ENV !== 'test') {
 
 // --- 2. TENANT ISOLATION ---
 app.use(detectTenant);
+app.use(injectAcademicYear);
+app.use('/api/', apiActivityMiddleware);
+
+// --- 2.5 PROFILE COMPLETION GUARD ---
+// Blocks school admins from accessing the platform until their profile is complete
+app.use(requireProfileCompletion);
 
 // --- 3. ROUTES ---
 
@@ -142,17 +256,53 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API routes
+// API Versioning (v1)
+app.use('/api/v1/mobile', mobileRoutes);
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/branches', branchRoutes);
+app.use('/api/v1/academic', academicRoutes);
+app.use('/api/v1/subscription', subscriptionRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/school-settings', schoolAdminRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/public', publicRoutes);
+app.use('/api/v1/school-admin/public-content', schoolPublicContentRoutes);
+app.use('/api/v1/admin', schoolProfileRoutes);
+app.use('/api/v1/teachers', teacherRoutes);
+app.use('/api/v1/students', studentRoutes);
+app.use('/api/v1/parents', parentRoutes);
+app.use('/api/v1/super-admin', superAdminRoutes);
+app.use('/api/v1/school-admin', schoolAdminRoutes);
+app.use('/api/v1/rbac', rbacRoutes);
+app.use('/api/v1/enterprise', enterpriseRoutes);
+app.use('/api/v1/search', searchRoutes);
+app.use('/api/v1/onboarding', onboardingRoutes);
+app.use('/api/v1/school-features', schoolFeatureRoutes);
+
+// Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/branches', branchRoutes);
+app.use('/api/academic', academicRoutes);
+app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/school-settings', schoolAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/school-admin/public-content', schoolPublicContentRoutes);
 app.use('/api/admin', schoolProfileRoutes);
 app.use('/api/teachers', teacherRoutes);
 app.use('/api/students', studentRoutes);
+app.use('/api/parents', parentRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/school-admin', schoolAdminRoutes);
+app.use('/api/rbac', rbacRoutes);
+app.use('/api/enterprise', enterpriseRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/onboarding', onboardingRoutes);
+
+// Mobile ngrok/dev compatibility: some Expo builds use an API_URL without /api.
+app.use('/mobile', mobileRoutes);
 
 // --- 4. ERROR HANDLING ---
 
@@ -161,6 +311,13 @@ app.use(ensureUserMessage);
 
 // 404 handler
 app.use((req, res) => {
+  // Ensure CORS headers for 404
+  const origin = req.headers.origin;
+  if (origin && process.env.NODE_ENV === 'development') {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+
   res.status(404).json({
     success: false,
     message: 'Route not found',
@@ -170,6 +327,24 @@ app.use((req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
+  // Ensure CORS headers are present even in error responses
+  const origin = req.headers.origin;
+  if (origin) {
+    if (process.env.NODE_ENV === 'development') {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+    } else {
+      const allowed = parseAllowedOrigins();
+      const ok = allowed?.some((rule) =>
+        rule instanceof RegExp ? rule.test(origin) : rule === origin
+      );
+      if (ok) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+      }
+    }
+  }
+
   // Log critical errors for monitoring
   if (err.status >= 500 || !err.status) {
     console.error('CRITICAL ERROR:', {
@@ -237,8 +412,6 @@ app.use((err, req, res, next) => {
   const statusCode = err.status || err.statusCode || res.statusCode || 500;
   let userMessage = mapErrorMessage(err);
   
-  // If it's a 400 error and mapErrorMessage returned the default, 
-  // use the original error message as it's likely a custom validation message
   if (statusCode === 400 && userMessage.includes('Something went wrong')) {
     userMessage = err.message;
   }

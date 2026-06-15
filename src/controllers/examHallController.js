@@ -9,8 +9,12 @@ import mongoose from 'mongoose';
 // @access  Private (School Admin, Teacher, Student)
 export const getExamHalls = asyncHandler(async (req, res) => {
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId || req.user.branch?._id || req.user.branch;
   
-  let query = { school: schoolId };
+  let query = { 
+    school: schoolId,
+    ...(branchId ? { branch: branchId } : {})
+  };
   
   // If teacher, strictly filter to halls they supervise
   if (req.user.role === 'teacher') {
@@ -35,8 +39,13 @@ export const getExamHalls = asyncHandler(async (req, res) => {
 export const getExamHallById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId || req.user.branch?._id || req.user.branch;
 
-  let query = { _id: id, school: schoolId };
+  let query = { 
+    _id: id, 
+    school: schoolId,
+    ...(branchId ? { branch: branchId } : {})
+  };
 
   // Strict access control for teachers and students
   if (req.user.role === 'teacher') {
@@ -126,6 +135,7 @@ export const getExamHallById = asyncHandler(async (req, res) => {
 // @access  Private (School Admin)
 export const createExamHall = asyncHandler(async (req, res) => {
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId || req.user.branch?._id || req.user.branch;
   const { name, capacity, examDate, examSession, supervisors } = req.body;
 
   if (!name || !capacity || !examDate) {
@@ -133,7 +143,7 @@ export const createExamHall = asyncHandler(async (req, res) => {
     throw new Error('Please provide all required fields (name, capacity, examDate)');
   }
 
-  // Check for duplicate hall name on same date/session
+  // Check for duplicate hall name on same date/session (scoped to tenant + branch)
   const startOfDay = new Date(examDate);
   startOfDay.setUTCHours(0, 0, 0, 0);
   const endOfDay = new Date(examDate);
@@ -141,6 +151,7 @@ export const createExamHall = asyncHandler(async (req, res) => {
 
   const existingHall = await ExamHall.findOne({
     school: schoolId,
+    ...(branchId ? { branch: branchId } : {}),
     name,
     examDate: { $gte: startOfDay, $lte: endOfDay },
     examSession
@@ -148,13 +159,14 @@ export const createExamHall = asyncHandler(async (req, res) => {
 
   if (existingHall) {
     res.status(400);
-    throw new Error(`A hall named "${name}" already exists for this date and session.`);
+    throw new Error(`A hall named "${name}" already exists for this date and session in this branch.`);
   }
 
-  // Check if any supervisor is already assigned to another hall on the same date and session
+  // Check if any supervisor is already assigned to another hall on the same date and session (scoped to tenant + branch)
   if (supervisors && supervisors.length > 0) {
     const assignedSupervisorHall = await ExamHall.findOne({
       school: schoolId,
+      ...(branchId ? { branch: branchId } : {}),
       examDate: { $gte: startOfDay, $lte: endOfDay },
       examSession, // Check same session
       supervisors: { $in: supervisors }
@@ -169,6 +181,7 @@ export const createExamHall = asyncHandler(async (req, res) => {
 
   const hall = await ExamHall.create({
     school: schoolId,
+    ...(branchId ? { branch: branchId } : {}),
     name,
     capacity,
     examDate,
@@ -189,9 +202,14 @@ export const createExamHall = asyncHandler(async (req, res) => {
 export const updateExamHall = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const schoolId = req.user.school?._id || req.user.school;
+  const branchId = req.branchId || req.user.branch?._id || req.user.branch;
   const { name, capacity, examDate, examSession, supervisors } = req.body;
 
-  const hall = await ExamHall.findOne({ _id: id, school: schoolId });
+  const hall = await ExamHall.findOne({ 
+    _id: id, 
+    school: schoolId,
+    ...(branchId ? { branch: branchId } : {})
+  });
 
   if (!hall) {
     res.status(404);
@@ -203,7 +221,7 @@ export const updateExamHall = asyncHandler(async (req, res) => {
     throw new Error(`Capacity cannot be less than the number of currently assigned students (${hall.students.length})`);
   }
 
-  // Check if any supervisor is already assigned to another hall on the same date and session
+  // Check if any supervisor is already assigned to another hall on the same date and session (scoped to tenant + branch)
   if (supervisors && supervisors.length > 0) {
     const targetDate = examDate ? new Date(examDate) : hall.examDate;
     const targetSession = examSession || hall.examSession;
@@ -214,6 +232,7 @@ export const updateExamHall = asyncHandler(async (req, res) => {
 
     const assignedSupervisorHall = await ExamHall.findOne({
       school: schoolId,
+      ...(branchId ? { branch: branchId } : {}),
       _id: { $ne: id },
       examDate: { $gte: startOfDay, $lte: endOfDay },
       examSession: targetSession, // Check same session

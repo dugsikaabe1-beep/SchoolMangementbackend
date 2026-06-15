@@ -25,13 +25,18 @@ import {
   revokeTemporaryClearance
 } from '../controllers/examHallController.js';
 import { protect, allowTeacher } from '../middlewares/authMiddleware.js';
+import { branchIsolation } from '../middlewares/branchMiddleware.js';
+import { injectOwnership } from '../middlewares/tenantMiddleware.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
+import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(protect);
 router.use(allowTeacher);
+router.use(injectOwnership);
+router.use(branchIsolation);
 
 // Read-only routes (no subscription check needed)
 router.get('/dashboard-stats', getTeacherDashboardStats);
@@ -59,6 +64,7 @@ router.post('/marks', checkSubscription, submitMarks); // Alias for requested /a
 router.post('/bulk-submit-marks', checkSubscription, bulkSubmitMarks);
 
 // Exam Hall Routes
+router.use('/exam-halls', checkModuleAccess('exam-halls'));
 router.get('/exam-halls', getExamHalls);
 router.get('/exam-halls/:id', getExamHallById);
 router.post('/exam-halls/temporary-clearance', checkSubscription, grantTemporaryClearance);

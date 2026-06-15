@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import School from '../models/School.js';
+import Plan from '../models/Plan.js';
 import asyncHandler from 'express-async-handler';
 
 // @desc    Check school profile completion status
@@ -18,16 +19,47 @@ export const checkProfileStatus = asyncHandler(async (req, res) => {
   if (!isAdminRole) {
     return res.json({
       completed: true,
-      schoolExists: true
+      schoolExists: true,
+      schoolProfileCompleted: true,
+      requiresProfileCompletion: false
     });
   }
   
-  const school = await School.findOne({ _id: admin.school });
-  
+  const school = admin.school ? await School.findById(admin.school) : null;
+
+  // ── Check actual required fields on the School document ──
+  const requiredFields = {
+    name: 'School Name',
+    schoolType: 'School Type',
+    country: 'Country',
+    city: 'City',
+    logo: 'School Logo',
+    address: 'Address',
+    phone: 'Phone Number',
+    email: 'School Email',
+    merchantNumber: 'Merchant / Account Number'
+  };
+
+  const missingFields = [];
+  if (school) {
+    for (const [field, label] of Object.entries(requiredFields)) {
+      const val = school[field];
+      if (!val || (typeof val === 'string' && !val.trim())) {
+        missingFields.push({ field, label });
+      }
+    }
+  }
+
+  const isComplete = !!school && admin.schoolProfileCompleted === true && missingFields.length === 0;
+
   res.json({
-    completed: school ? true : false,
+    completed: isComplete,
+    schoolProfileCompleted: isComplete,
     school: school || null,
-    requiresProfileCompletion: !school
+    missingFields,
+    onboarding: school?.onboarding,
+    role: admin.role,
+    requiresProfileCompletion: !isComplete
   });
 });
 
@@ -43,92 +75,154 @@ export const completeSchoolProfile = asyncHandler(async (req, res) => {
   }
   
   // Check if admin role is 'admin' or 'schooladmin'
-    const isAdminRole = ['admin', 'schooladmin', 'school_admin'].includes(admin.role);
-    if (!isAdminRole) {
-      res.status(403);
-      throw new Error('Only school admins can complete school profile');
-    }
+  const isAdminRole = ['admin', 'schooladmin', 'school_admin'].includes(admin.role);
+  if (!isAdminRole) {
+    res.status(403);
+    throw new Error('Only school admins can complete school profile');
+  }
   
+  // Accept both 'name' and 'schoolName' for backward compatibility
+  const schoolName = req.body.name || req.body.schoolName;
   const {
-    schoolName,
-    address,
+    schoolType,
     phone,
+    country,
+    city,
+    address,
     email,
+    merchantNumber,
     website,
     subscriptionType = 'trial',
     logo,
     principalName,
-    motto
+    motto,
+    description
   } = req.body;
   
-  // Validate required fields
-  if (!schoolName || !address || !logo) {
+  // ── Validate all required fields ──
+  const missing = [];
+  if (!schoolName || !schoolName.toString().trim()) missing.push('School Name');
+  if (!schoolType || !schoolType.toString().trim()) missing.push('School Type');
+  if (!country || !country.toString().trim()) missing.push('Country');
+  if (!city || !city.toString().trim()) missing.push('City');
+  if (!logo) missing.push('School Logo');
+  if (!address || !address.toString().trim()) missing.push('Address');
+  if (!phone || !phone.toString().trim()) missing.push('Phone Number');
+  if (!email || !email.toString().trim()) missing.push('School Email');
+  if (!merchantNumber || !merchantNumber.toString().trim()) missing.push('Merchant / Account Number');
+
+  if (missing.length > 0) {
     res.status(400);
-    const missing = [];
-    if (!schoolName) missing.push('schoolName');
-    if (!address) missing.push('address');
-    if (!logo) missing.push('logo');
-    
     const error = new Error(`Required fields missing: ${missing.join(', ')}`);
     error.status = 400;
     throw error;
   }
   
+  // Load intended plan from admin metadata if available
+  let plan = null;
+  if (admin.metadata?.intendedPlanId) {
+    plan = await Plan.findById(admin.metadata.intendedPlanId);
+  }
+  
   // Check if school already exists for this admin
-  let school = await School.findOne({ admin: admin._id });
+  let school = admin.school ? await School.findById(admin.school) : null;
   
   if (school) {
-    // Update existing school (keep existing subdomain)
-    school.name = schoolName;
-    school.logo = logo;
-    school.address = address;   // plain string — matches schema type
-    school.email = email;
-    school.phone = phone;
-    school.website = website;
-    school.subscription = { type: subscriptionType };
-    school.principal = principalName;
-    school.motto = motto;
+    // Update existing school
+    school.name = schoolName.trim();
+    school.schoolType = schoolType.trim();
+    school.phone = phone.toString().trim();
+    school.country = country.toString().trim();
+    school.city = city.toString().trim();
+    school.address = address.toString().trim();
+    school.logo = logo || school.logo;
+    school.email = email ? email.toString().trim().toLowerCase() : school.email;
+    school.merchantNumber = merchantNumber ? merchantNumber.toString().trim() : school.merchantNumber;
+    school.website = website || school.website;
+    school.principal = principalName || school.principal;
+    school.motto = motto || school.motto;
+    school.description = description || school.description;
+    // Update plan if provided
+    if (plan) {
+      school.subscription.plan = plan._id;
+      school.subscription.limits = {
+        students: plan.limits.students,
+        teachers: plan.limits.teachers,
+        branches: plan.limits.branches,
+        admins: plan.limits.admins,
+        storage: plan.limits.storage,
+        sms: plan.limits.sms,
+        email: plan.limits.email
+      };
+      if (plan.features && plan.features.length > 0) {
+        school.settings.enabledModules = [...plan.features];
+      }
+    }
     
     await school.save();
+
+    if (!admin.schoolProfileCompleted) {
+      admin.schoolProfileCompleted = true;
+      await admin.save();
+    }
   } else {
     // Generate a unique school code
     const code = `SCH${Date.now().toString().slice(-6)}`;
     
     // Auto-generate a subdomain from the school name
-    // e.g. "Hamar Jajab School" => "hamar-jajab-school"
     const baseSubdomain = schoolName
       .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')   // strip special chars
+      .replace(/[^a-z0-9\s-]/g, '')
       .trim()
-      .replace(/\s+/g, '-');           // spaces → hyphens
+      .replace(/\s+/g, '-');
 
-    // Ensure subdomain uniqueness — append short timestamp suffix if already taken
     let subdomain = baseSubdomain;
     const existingWithSubdomain = await School.findOne({ subdomain });
     if (existingWithSubdomain) {
       subdomain = `${baseSubdomain}-${Date.now().toString().slice(-4)}`;
     }
 
-    // Create new school with all required fields
     school = await School.create({
-      name: schoolName,
-      subdomain,          // ← required field — auto-generated from school name
+      name: schoolName.trim(),
+      subdomain,
+      schoolType: schoolType.trim(),
+      phone: phone.toString().trim(),
+      country: country.toString().trim(),
+      city: city.toString().trim(),
+      address: address.toString().trim(),
       logo,
       code,
-      address,            // ← plain string — matches schema type
-      email,
-      phone,
-      website,
+      email: email ? email.toString().trim().toLowerCase() : '',
+      merchantNumber: merchantNumber ? merchantNumber.toString().trim() : '',
+      website: website || '',
       admin: admin._id,
-      subscription: { type: subscriptionType },
+      subscription: { 
+        type: subscriptionType,
+        plan: plan ? plan._id : undefined,
+        limits: plan ? {
+          students: plan.limits.students,
+          teachers: plan.limits.teachers,
+          branches: plan.limits.branches,
+          admins: plan.limits.admins,
+          storage: plan.limits.storage,
+          sms: plan.limits.sms,
+          email: plan.limits.email
+        } : undefined
+      },
+      settings: plan && plan.features ? {
+        enabledModules: [...plan.features]
+      } : undefined,
       isActive: true,
-      principal: principalName,
-      motto
+      status: 'active',
+      principal: principalName || '',
+      motto: motto || '',
+      description: description || ''
     });
     
-    // Link school to admin and mark profile as complete
     admin.school = school._id;
     admin.schoolProfileCompleted = true;
+    // Clear metadata after use
+    admin.metadata = {};
     await admin.save();
   }
   
@@ -138,12 +232,17 @@ export const completeSchoolProfile = asyncHandler(async (req, res) => {
     school: {
       _id: school._id,
       name: school.name,
-      logo: school.logo,
-      address: school.address,
-      email: school.email,
+      schoolType: school.schoolType,
       phone: school.phone,
+      country: school.country,
+      city: school.city,
+      address: school.address,
+      logo: school.logo,
       subdomain: school.subdomain,
-      subscription: school.subscription
+      email: school.email,
+      merchantNumber: school.merchantNumber,
+      subscription: school.subscription,
+      description: school.description
     }
   });
 });
