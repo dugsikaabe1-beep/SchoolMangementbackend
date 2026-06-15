@@ -1,6 +1,7 @@
 import Notification from '../models/Notification.js';
 import School from '../models/School.js';
 import User from '../models/User.js';
+import DeliveryLog from '../models/DeliveryLog.js';
 import nodemailer from 'nodemailer';
 import { emitToUser, emitToSchool } from './socket.js';
 
@@ -63,11 +64,13 @@ export const sendNotification = async ({
     // 2. Create the notification record (In-App)
     const notification = await Notification.create({
       recipient: recipientId,
+      recipients: [{ kind: 'user', id: recipientId }],
+      tenantId: schoolId,
       school: schoolId,
       branch: branchId,
       title,
       message,
-      type,
+      messageType: type,
       priority,
       actionLink,
       metadata,
@@ -87,7 +90,7 @@ export const sendNotification = async ({
     // 4. Email Integration
     if (emailData && (await checkPlanPermission(schoolId, 'email-automation'))) {
       try {
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
           from: `"DugsiKabe" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
           to: emailData.to,
           subject: emailData.subject || title,
@@ -95,6 +98,20 @@ export const sendNotification = async ({
         });
         usedChannels.push('email');
         console.log(`[NotificationService] Email sent to ${emailData.to}`);
+
+        // Record delivery log for email
+        await DeliveryLog.create({
+          notificationId: notification._id,
+          tenantId: schoolId,
+          school: schoolId,
+          branch: branchId,
+          channel: 'email',
+          provider: 'nodemailer',
+          providerMessageId: info.messageId,
+          to: { email: emailData.to },
+          status: 'sent',
+          sentAt: new Date()
+        });
       } catch (emailError) {
         console.error('[NotificationService] Email delivery failed:', emailError.message);
       }
@@ -103,8 +120,17 @@ export const sendNotification = async ({
     // 5. SMS Integration (Pluggable stubs)
     if (smsData && (await checkPlanPermission(schoolId, 'sms'))) {
       try {
-        // TODO: Integrate with Twilio / Africa's Talking / etc.
-        console.log(`[NotificationService] [STUB] SMS sent to ${smsData.to}: ${smsData.body}`);
+        // Create queued delivery log for SMS (worker will process later)
+        await DeliveryLog.create({
+          notificationId: notification._id,
+          tenantId: schoolId,
+          school: schoolId,
+          branch: branchId,
+          channel: 'sms',
+          provider: 'queued_sms',
+          to: { phone: smsData.to },
+          status: 'queued'
+        });
         usedChannels.push('sms');
       } catch (smsError) {
         console.error('[NotificationService] SMS delivery failed:', smsError.message);
@@ -114,8 +140,17 @@ export const sendNotification = async ({
     // 6. WhatsApp Integration
     if (whatsappData && (await checkPlanPermission(schoolId, 'whatsapp'))) {
       try {
-        // TODO: Integrate with Meta WhatsApp API / Twilio WhatsApp
-        console.log(`[NotificationService] [STUB] WhatsApp sent to ${whatsappData.to}: ${whatsappData.body}`);
+        // Create queued delivery log for WhatsApp (worker will process later)
+        await DeliveryLog.create({
+          notificationId: notification._id,
+          tenantId: schoolId,
+          school: schoolId,
+          branch: branchId,
+          channel: 'whatsapp',
+          provider: 'queued_whatsapp',
+          to: { phone: whatsappData.to },
+          status: 'queued'
+        });
         usedChannels.push('whatsapp');
       } catch (waError) {
         console.error('[NotificationService] WhatsApp delivery failed:', waError.message);
@@ -125,8 +160,17 @@ export const sendNotification = async ({
     // 7. Push Notifications (FCM/Expo)
     if (pushData && (await checkPlanPermission(schoolId, 'push-notifications'))) {
       try {
-        // TODO: Integrate with FCM or Expo Push SDK
-        console.log(`[NotificationService] [STUB] Push notification sent to token: ${pushData.token}`);
+        // Create queued delivery log for Push (worker will process later)
+        await DeliveryLog.create({
+          notificationId: notification._id,
+          tenantId: schoolId,
+          school: schoolId,
+          branch: branchId,
+          channel: 'push',
+          provider: 'queued_push',
+          to: { userId: recipientId },
+          status: 'queued'
+        });
         usedChannels.push('push');
       } catch (pushError) {
         console.error('[NotificationService] Push delivery failed:', pushError.message);
@@ -163,11 +207,13 @@ export const broadcastNotification = async ({
 
     const notifications = recipientIds.map(id => ({
       recipient: id,
+      recipients: [{ kind: 'user', id }],
+      tenantId: schoolId,
       school: schoolId,
       branch: branchId,
       title,
       message,
-      type,
+      messageType: type,
       priority,
       channels
     }));

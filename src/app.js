@@ -159,6 +159,10 @@ import branchRoutes from './routes/branchRoutes.js';
 import academicRoutes from './routes/academicRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import notificationWebhookRoutes from './routes/notificationWebhookRoutes.js';
+import notificationTwilioWebhook from './routes/notificationTwilioWebhook.js';
+import notificationTemplateRoutes from './routes/notificationTemplateRoutes.js';
+import { runScheduler } from './services/scheduler.js';
 import rbacRoutes from './routes/rbacRoutes.js';
 import enterpriseRoutes from './routes/enterpriseRoutes.js';
 import searchRoutes from './routes/searchRoutes.js';
@@ -263,6 +267,23 @@ app.use('/api/v1/branches', branchRoutes);
 app.use('/api/v1/academic', academicRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/notifications/webhooks', notificationWebhookRoutes);
+app.use('/api/v1/notifications/webhooks', notificationTwilioWebhook);
+app.use('/api/v1/notifications/templates', notificationTemplateRoutes);
+
+// Start in-process scheduler loop if enabled (not recommended for clustered production)
+if (process.env.RUN_NOTIFICATION_SCHEDULER === '1') {
+  const intervalMs = parseInt(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS || '60000', 10);
+  console.log('[Scheduler] in-process scheduler enabled, intervalMs=', intervalMs);
+  setInterval(async () => {
+    try {
+      const n = await runScheduler(100);
+      if (n) console.log(`[Scheduler] processed ${n} jobs`);
+    } catch (err) {
+      console.error('[Scheduler] loop error', err.message);
+    }
+  }, intervalMs);
+}
 app.use('/api/v1/school-settings', schoolAdminRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/public', publicRoutes);

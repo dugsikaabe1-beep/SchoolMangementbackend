@@ -3,6 +3,9 @@ import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { protect, checkPermission } from '../middlewares/authMiddleware.js';
 import { broadcastNotification, sendNotification } from '../utils/notificationService.js';
+import NotificationTemplate from '../models/NotificationTemplate.js';
+import NotificationTemplateTranslation from '../models/NotificationTemplateTranslation.js';
+import { renderTemplate } from '../utils/templateUtils.js';
 
 const router = express.Router();
 
@@ -118,19 +121,24 @@ router.post('/', requireNotificationManager, async (req, res) => {
     const {
       title,
       message,
+      templateCode = null,
+      templateId = null,
+      language = 'en',
       type = 'info',
       priority = 'normal',
       actionLink = '',
       audience = 'all',
       recipientIds = [],
       channels = ['in_app'],
+      sendAt = null,
+      recurrence = null,
     } = req.body;
 
-    if (!title || !message) {
+    if (!templateCode && (!title || !message)) {
       return res.status(400).json({
         success: false,
-        message: 'Title and message are required',
-        userMessage: 'Please enter a title and message.',
+        message: 'Title and message are required when no templateCode provided',
+        userMessage: 'Please enter a title and message or provide a template code.',
       });
     }
 
@@ -151,6 +159,46 @@ router.post('/', requireNotificationManager, async (req, res) => {
     const fallbackBranchId = getBranchId(req);
     const shouldBroadcastInApp = selectedChannels.length === 1 && selectedChannels[0] === 'in_app' && recipients.length > 1;
 
+      // If templateCode provided, load template and translations
+      let template = null;
+      let templateTranslation = null;
+      if (templateId) {
+        template = await NotificationTemplate.findById(templateId);
+      } else if (templateCode) {
+        template = await NotificationTemplate.findOne({ school: schoolId, code: templateCode }) || await NotificationTemplate.findOne({ code: templateCode, isSystem: true });
+      }
+      if (template) {
+        templateTranslation = await NotificationTemplateTranslation.findOne({ templateId: template._id, language }) || null;
+      }
+
+    // Support frontend `scheduledAt` as alias for sendAt
+    const scheduledAt = req.body.scheduledAt || sendAt || null;
+
+    // Scheduling support: if scheduledAt provided and in the future, persist notification and scheduled job
+    if (scheduledAt && new Date(scheduledAt) > new Date()) {
+      // Persist notification with scheduling info and recipients (store some contact info for scheduler)
+      const notif = await Notification.create({
+        recipients: recipients.map(r => ({ kind: 'user', id: r._id, phone: r.phone, email: r.email })),
+        tenantId: schoolId,
+        school: schoolId,
+        branch: fallbackBranchId,
+        title,
+        message,
+        messageType: type,
+        priority,
+        channels: selectedChannels,
+        scheduling: { sendAt: new Date(scheduledAt), timezone: req.body.timezone || 'UTC', recurring: recurrence || null },
+        status: 'created',
+        createdBy: req.user._id
+      });
+
+      // Create scheduled job
+      const ScheduledJob = (await import('../models/ScheduledJob.js')).default;
+      await ScheduledJob.create({ notificationId: notif._id, tenantId: schoolId, school: schoolId, nextRunAt: new Date(scheduledAt), recurrenceRule: recurrence || null, timezone: req.body.timezone || 'UTC' });
+
+      return res.status(201).json({ success: true, message: 'Notification scheduled', data: { notificationId: notif._id } });
+    }
+
     let sent = [];
     if (shouldBroadcastInApp) {
       sent = await broadcastNotification({
@@ -165,34 +213,47 @@ router.post('/', requireNotificationManager, async (req, res) => {
         actionLink,
       }) || [];
     } else {
-      sent = await Promise.all(recipients.map((recipient) => sendNotification({
-        recipientId: recipient._id,
-        schoolId,
-        branchId: recipient.branch || fallbackBranchId,
-        title,
-        message,
-        type,
-        priority,
-        actionLink,
-        metadata: { createdBy: req.user._id, audience },
-        emailData: selectedChannels.includes('email') && recipient.email ? {
-          to: recipient.email,
-          subject: title,
-          html: `<p>${message}</p>`,
-        } : null,
-        smsData: selectedChannels.includes('sms') && recipient.phone ? {
-          to: recipient.phone,
-          body: message,
-        } : null,
-        whatsappData: selectedChannels.includes('whatsapp') && recipient.phone ? {
-          to: recipient.phone,
-          body: message,
-        } : null,
-        pushData: selectedChannels.includes('push') ? {
-          token: recipient.metadata?.pushToken || recipient.metadata?.expoPushToken,
-          data: { title, message, actionLink },
-        } : null,
-      })));
+      sent = await Promise.all(recipients.map((recipient) => {
+        // Prepare message using template if available
+        let useTitle = title;
+        let useMessage = message;
+        if (template) {
+          const tplSubj = templateTranslation?.subject || template.subject;
+          const tplBody = templateTranslation?.body || template.body;
+          const data = { user: recipient, recipient, school: { id: schoolId } };
+          useTitle = renderTemplate(tplSubj, data);
+          useMessage = renderTemplate(tplBody, data);
+        }
+
+        return sendNotification({
+          recipientId: recipient._id,
+          schoolId,
+          branchId: recipient.branch || fallbackBranchId,
+          title: useTitle,
+          message: useMessage,
+          type,
+          priority,
+          actionLink,
+          metadata: { createdBy: req.user._id, audience },
+          emailData: selectedChannels.includes('email') && recipient.email ? {
+            to: recipient.email,
+            subject: useTitle,
+            html: `<p>${useMessage}</p>`,
+          } : null,
+          smsData: selectedChannels.includes('sms') && recipient.phone ? {
+            to: recipient.phone,
+            body: useMessage,
+          } : null,
+          whatsappData: selectedChannels.includes('whatsapp') && recipient.phone ? {
+            to: recipient.phone,
+            body: useMessage,
+          } : null,
+          pushData: selectedChannels.includes('push') ? {
+            token: recipient.metadata?.pushToken || recipient.metadata?.expoPushToken,
+            data: { title, message, actionLink },
+          } : null,
+        });
+      }));
     }
 
     res.status(201).json({
