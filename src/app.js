@@ -157,6 +157,7 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import notificationWebhookRoutes from './routes/notificationWebhookRoutes.js';
 import notificationTwilioWebhook from './routes/notificationTwilioWebhook.js';
 import notificationTemplateRoutes from './routes/notificationTemplateRoutes.js';
+import communicationSettingsRoutes from './routes/communicationSettingsRoutes.js';
 import { runScheduler } from './services/scheduler.js';
 import rbacRoutes from './routes/rbacRoutes.js';
 import enterpriseRoutes from './routes/enterpriseRoutes.js';
@@ -265,6 +266,7 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/notifications/webhooks', notificationWebhookRoutes);
 app.use('/api/v1/notifications/webhooks', notificationTwilioWebhook);
 app.use('/api/v1/notifications/templates', notificationTemplateRoutes);
+app.use('/api/v1/admin/communication-settings', communicationSettingsRoutes);
 
 // Start in-process scheduler loop if enabled (not recommended for clustered production)
 if (process.env.RUN_NOTIFICATION_SCHEDULER === '1') {
@@ -302,6 +304,7 @@ app.use('/api/branches', branchRoutes);
 app.use('/api/academic', academicRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin/communication-settings', communicationSettingsRoutes);
 app.use('/api/school-settings', schoolAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', publicRoutes);
