@@ -34,8 +34,8 @@ const corsOptions = {
     // 1. Allow if no origin (non-browser)
     if (!origin) return callback(null, true);
 
-    // 2. Explicitly allow the known frontend origin
-    if (origin === 'https://dugsihub-lilac.vercel.app') {
+    // 2. Explicitly allow the known frontend origins
+    if (origin === 'https://dugsihub-lilac.vercel.app' || origin === 'https://dugsimaamul.vercel.app') {
       return callback(null, true);
     }
 
@@ -98,9 +98,11 @@ if (process.env.NODE_ENV === 'development') {
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  // Allow known production origin or localhost during development
+  // Allow known production origins or localhost during development
   const isAllowedOrigin =
     origin === 'https://dugsikabe.vercel.app' ||
+    origin === 'https://dugsihub-lilac.vercel.app' ||
+    origin === 'https://dugsimaamul.vercel.app' ||
     origin === 'https://schoolmangementbackend-production.up.railway.app' ||
     (process.env.NODE_ENV === 'development' && origin && origin.startsWith('http://localhost:'));
 
