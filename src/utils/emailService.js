@@ -445,14 +445,14 @@ This is an automated message, please do not reply.
 
   try {
     // Enqueue email for sending via worker (reliable, retried)
-    const emailLog = await createEmailLog({ to: user.email, from: process.env.EMAIL_FROM || 'no-reply@dugsikabe.com', replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_FROM, subject: 'Verify your email address - DugsiKabe', type: 'VERIFICATION', provider: 'queued', metadata: { userId: user._id } });
+    const emailLog = await createEmailLog({ to: user.email, from: process.env.EMAIL_FROM || 'no-reply@dugsikabe.com', replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_FROM, subject: 'Verify your email address - DugsiKabe', type: 'VERIFICATION', provider: 'direct', metadata: { userId: user._id } });
 
-    // Lazy import to avoid circular deps
-    const { enqueueEmail } = await import('../jobs/emailQueue.js');
-    await enqueueEmail({ to: user.email, subject: 'Verify your email address - DugsiKabe', html, text, type: 'VERIFICATION', metadata: { userId: user._id }, emailLogId: emailLog?._id });
+    await sendEmail({ email: user.email, subject: 'Verify your email address - DugsiKabe', html, text, type: 'VERIFICATION', metadata: { userId: user._id } });
+    await updateEmailLog(emailLog, { status: 'sent' });
+
 
     await logAction(null, {
-      action: 'VERIFICATION_QUEUED',
+      action: 'VERIFICATION_SENT',
       module: 'EMAIL',
       targetId: user._id,
       details: {
