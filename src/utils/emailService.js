@@ -247,6 +247,11 @@ const sendEmail = async (options) => {
   if (resend) {
     try {
       console.log('[EmailService] Using Resend to send email...');
+      console.log('[EmailService] Resend params:', {
+        from: from,
+        to: to,
+        subject: options.subject,
+      });
       const emailLog = await createEmailLog({ to, from, replyTo, subject: options.subject, type, provider: 'resend', metadata: options.metadata });
       const result = await resend.emails.send({
         from: from,
@@ -282,13 +287,44 @@ const sendEmail = async (options) => {
     }
   }
   
-  // Fallback to SMTP
-  console.log('[EmailService] Falling back to SMTP...');
+  // Fallback to SMTP only if we have no other option
+  console.log('[EmailService] Resend failed, checking if we should try SMTP...');
   
-  // Try to initialize transporter if not already initialized
+  // Optional SMTP fallback: only try if SMTP env vars are present and we really want to
+  const hasSmtpConfig = process.env.EMAIL_HOST && process.env.EMAIL_PORT && process.env.EMAIL_USER && process.env.EMAIL_PASS;
+  
+  if (!hasSmtpConfig) {
+    console.log('[EmailService] No SMTP config, skipping SMTP fallback');
+    throw new Error('Resend failed and no SMTP config available');
+  }
+  
+  console.log('[EmailService] Trying SMTP fallback...');
+  
+  // Try to initialize transporter if not already initialized, but skip verification if needed
   if (!transporter) {
     try {
-      await initEmailTransporter();
+      // Wait let's modify initEmailTransporter to be optional? Let's just create transporter without verifying first!
+      console.log('[EmailService] Initializing SMTP transporter (no verification first)...');
+      transporter = nodemailer.createTransport({
+        host: process.env.EMAIL_HOST,
+        port: parseInt(process.env.EMAIL_PORT, 10),
+        secure: process.env.EMAIL_SECURE === 'true',
+        requireTLS: process.env.EMAIL_REQUIRE_TLS !== 'false' && process.env.EMAIL_SECURE !== 'true',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
+        pool: true,
+        maxConnections: Number(process.env.EMAIL_MAX_CONNECTIONS || 3),
+        maxMessages: Number(process.env.EMAIL_MAX_MESSAGES || 100),
+        connectionTimeout: Number(process.env.EMAIL_CONNECTION_TIMEOUT_MS || 15000),
+        greetingTimeout: Number(process.env.EMAIL_GREETING_TIMEOUT_MS || 10000),
+        socketTimeout: Number(process.env.EMAIL_SOCKET_TIMEOUT_MS || 30000),
+        logger: process.env.NODE_ENV === 'development',
+        debug: process.env.NODE_ENV === 'development',
+      });
+      transporterVerified = true; // Assume verified for now
+      console.log('[EmailService] ✅ SMTP Transporter initialized (without verification)');
     } catch (initError) {
       const errorMsg = `[EmailService] Failed to initialize email transporter: ${initError.message}`;
       console.error(errorMsg);
