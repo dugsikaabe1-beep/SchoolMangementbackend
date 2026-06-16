@@ -122,6 +122,9 @@ export const STARTER_FEATURES = [
   'students', 'teachers', 'classes', 'subjects',
   'attendance', 'schedules', 'academic-years',
   'announcements', 'settings', 'support',
+  // Core communication features - always included
+  'notifications', 'push-notifications', 'sms', 'email-automation',
+  'whatsapp', 'bulk-messaging', 'automated-alerts'
 ];
 
 /**
@@ -130,7 +133,7 @@ export const STARTER_FEATURES = [
 export const PROFESSIONAL_FEATURES = [
   ...STARTER_FEATURES,
   'parents', 'sections', 'exams', 'results', 'exam-halls', 'promotions',
-  'finance', 'notifications', 'push-notifications', 'email-automation', 
+  'finance', 
   'parent-app', 'student-app', 'teacher-app',
   'roles', 'permissions', 'website', 'events',
   'academic-reports', 'attendance-reports', 'student-reports',

@@ -211,6 +211,96 @@ export const deleteNotificationTemplate = asyncHandler(async (req, res) => {
   res.json({ message: 'Notification template deleted successfully' });
 });
 
+export const duplicateNotificationTemplate = asyncHandler(async (req, res) => {
+  const school = req.user.school;
+  const originalTemplate = await NotificationTemplate.findOne({
+    _id: req.params.id,
+    school,
+    isDeleted: false
+  });
+
+  if (!originalTemplate) {
+    res.status(404);
+    throw new Error('Notification template not found');
+  }
+
+  // Generate unique code for duplicate
+  const baseCode = originalTemplate.code;
+  let suffix = 1;
+  let newCode = `${baseCode}-${suffix}`;
+  
+  while (await NotificationTemplate.findOne({ school, code: newCode, isDeleted: false })) {
+    suffix++;
+    newCode = `${baseCode}-${suffix}`;
+  }
+
+  const duplicatedTemplate = await NotificationTemplate.create({
+    name: `${originalTemplate.name} (Copy)`,
+    code: newCode,
+    category: originalTemplate.category,
+    subject: originalTemplate.subject,
+    body: originalTemplate.body,
+    placeholders: originalTemplate.placeholders,
+    type: originalTemplate.type,
+    isSystem: false,
+    isActive: true,
+    school,
+    createdBy: req.user._id,
+    updatedBy: req.user._id
+  });
+
+  await logAction(req.user._id, {
+    action: 'DUPLICATE_NOTIFICATION_TEMPLATE',
+    module: 'NOTIFICATIONS',
+    targetId: duplicatedTemplate._id,
+    details: {
+      originalId: req.params.id,
+      templateName: duplicatedTemplate.name,
+      templateCode: duplicatedTemplate.code
+    }
+  });
+
+  res.status(201).json(duplicatedTemplate);
+});
+
+export const restoreNotificationTemplate = asyncHandler(async (req, res) => {
+  const school = req.user.school;
+  const template = await NotificationTemplate.findOne({
+    _id: req.params.id,
+    school,
+    isDeleted: true
+  });
+
+  if (!template) {
+    res.status(404);
+    throw new Error('Notification template not found');
+  }
+
+  if (template.isSystem) {
+    res.status(403);
+    throw new Error('Cannot restore system templates');
+  }
+
+  template.isDeleted = false;
+  template.deletedAt = undefined;
+  template.deletedBy = undefined;
+  template.updatedBy = req.user._id;
+
+  await template.save();
+
+  await logAction(req.user._id, {
+    action: 'RESTORE_NOTIFICATION_TEMPLATE',
+    module: 'NOTIFICATIONS',
+    targetId: template._id,
+    details: {
+      templateName: template.name,
+      templateCode: template.code
+    }
+  });
+
+  res.json({ message: 'Notification template restored successfully' });
+});
+
 // @desc    Seed system notification templates for a new school
 // @route   POST /api/admin/notification-templates/seed
 // @access  Private (Super Admin only)

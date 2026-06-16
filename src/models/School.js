@@ -51,6 +51,58 @@ const schoolSchema = new mongoose.Schema(
       },
       enabledModules: [{ type: String }], // List of module codes enabled for this school
     },
+
+    // COMMUNICATION SETTINGS (per tenant)
+    communicationSettings: {
+      // SMS
+      sms: {
+        provider: { type: String, enum: ['twilio', 'africastalking', 'hormuud', 'somtel', 'custom'], default: 'twilio' },
+        senderId: { type: String, trim: true },
+        apiKey: { type: String, trim: true, select: false },
+        apiSecret: { type: String, trim: true, select: false },
+        accountSid: { type: String, trim: true, select: false },
+        fromNumber: { type: String, trim: true },
+        isEnabled: { type: Boolean, default: true }
+      },
+      // WHATSAPP
+      whatsapp: {
+        provider: { type: String, enum: ['meta', 'twilio', 'custom'], default: 'meta' },
+        phoneNumber: { type: String, trim: true },
+        phoneNumberId: { type: String, trim: true },
+        businessAccountId: { type: String, trim: true },
+        apiKey: { type: String, trim: true, select: false },
+        apiSecret: { type: String, trim: true, select: false },
+        accessToken: { type: String, trim: true, select: false },
+        isEnabled: { type: Boolean, default: true }
+      },
+      // EMAIL
+      email: {
+        host: { type: String, trim: true },
+        port: { type: Number, default: 587 },
+        secure: { type: Boolean, default: false },
+        username: { type: String, trim: true },
+        password: { type: String, trim: true, select: false },
+        senderName: { type: String, trim: true },
+        senderAddress: { type: String, trim: true, lowercase: true },
+        isEnabled: { type: Boolean, default: true }
+      },
+      // PUSH NOTIFICATIONS
+      push: {
+        provider: { type: String, enum: ['firebase', 'onesignal', 'expo', 'custom'], default: 'firebase' },
+        apiKey: { type: String, trim: true, select: false },
+        projectId: { type: String, trim: true },
+        appId: { type: String, trim: true },
+        isEnabled: { type: Boolean, default: true }
+      },
+      // COMMUNICATION PREFERENCES
+      preferences: {
+        defaultLanguage: { type: String, default: 'en' },
+        autoSendAttendanceAlerts: { type: Boolean, default: true },
+        autoSendFeeReminders: { type: Boolean, default: true },
+        autoSendExamResults: { type: Boolean, default: true },
+        allowParentReply: { type: Boolean, default: false }
+      }
+    },
     
     // Status and Statistics
     status: { 

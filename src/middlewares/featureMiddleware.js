@@ -1,6 +1,18 @@
 import School from '../models/School.js';
 import { isFeatureEnabled, getPlanFeaturesForSchool } from '../utils/featureAccess.js';
 
+// List of all communication features that must never be restricted
+const COMMUNICATION_FEATURES = [
+  'announcements',
+  'notifications',
+  'push-notifications',
+  'sms',
+  'email-automation',
+  'whatsapp',
+  'bulk-messaging',
+  'automated-alerts'
+];
+
 /**
  * Feature Control Middleware
  * Checks if a specific module/feature is enabled for the school's current plan.
@@ -12,6 +24,12 @@ export const checkModuleAccess = (moduleCode) => {
     try {
       console.log(`[FeatureControl] Checking access for module: ${moduleCode}`);
       console.log(`[FeatureControl] req.schoolId:`, req.schoolId);
+      
+      // Always allow communication features - no checks needed
+      if (COMMUNICATION_FEATURES.includes(moduleCode)) {
+        console.log(`[FeatureControl] ${moduleCode} is a core communication feature - skipping check`);
+        return next();
+      }
       
       if (!req.schoolId) {
         console.log(`[FeatureControl] No schoolId found, skipping feature check`);
