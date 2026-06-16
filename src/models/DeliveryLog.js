@@ -2,13 +2,13 @@ import mongoose from 'mongoose';
 
 const deliveryLogSchema = new mongoose.Schema(
   {
-    notificationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Notification', index: true },
-    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'School', index: true },
-    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', index: true },
-    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', index: true },
-    channel: { type: String, enum: ['email', 'sms', 'whatsapp', 'push'], required: true, index: true },
-    provider: { type: String, required: true, index: true },
-    providerMessageId: { type: String, index: true },
+    notificationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Notification' },
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'School' },
+    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School' },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch' },
+    channel: { type: String, enum: ['email', 'sms', 'whatsapp', 'push'], required: true },
+    provider: { type: String, required: true },
+    providerMessageId: { type: String },
     
     // CRITICAL: Recipient details (always from database, never manual)
     to: {
