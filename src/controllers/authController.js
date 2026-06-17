@@ -522,29 +522,15 @@ export const adminLogin = async (req, res) => {
       if (user && (await user.matchPassword(password))) {
         await handleSuccessfulLogin(req, user);
 
-        // --- 2FA for Super Admin ---
-        const otp = generateOTP();
-        user.otp = await hashOTP(otp);
-        user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-        user.otpAttempts = 0;
-        await user.save();
+        logAction(req, { action: 'LOGIN_SUCCESS', module: 'AUTH', targetId: user._id });
 
-        try {
-          await sendOTPEmail(user.email, otp, user);
-        } catch (emailError) {
-          console.error('Failed to send OTP email:', emailError.message);
-          return res.status(500).json({
-            message: 'Failed to send verification code',
-            userMessage: 'We could not send the verification code to your email. Please try again later.',
-            error: emailError.message
-          });
-        }
-
-        return res.json({
-          requires2FA: true,
-          userId: user._id,
-          email: user.email.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => gp2 + '*'.repeat(gp3.length)),
-          message: 'A verification code has been sent to your email.'
+        res.json({
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: 'superadmin',
+          isSuperAdmin: true,
+          token: await issueTokens(res, user),
         });
       }
     }
@@ -583,36 +569,30 @@ export const adminLogin = async (req, res) => {
 
       await handleSuccessfulLogin(req, user);
 
-      // --- 2FA for School Admin / Branch Manager ---
-      const otp = generateOTP();
-      user.otp = await hashOTP(otp);
-      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-      user.otpAttempts = 0;
-      await user.save();
+      logAction(req, { action: 'LOGIN_SUCCESS', module: 'AUTH', targetId: user._id });
 
-      try {
-        await sendOTPEmail(user.email, otp, user);
-      } catch (emailError) {
-        console.error('Failed to send OTP email:', emailError.message);
-        return res.status(500).json({
-          message: 'Failed to send verification code',
-          userMessage: 'We could not send the verification code to your email. Please try again later.',
-          error: emailError.message
-        });
+      // Add enabled features to the school object if school exists
+      let schoolData = user.school;
+      if (user.school && (user.school._id || user.school)) {
+        const schoolId = user.school._id || user.school;
+        const enabledFeatures = await getEnabledFeaturesForSchool(schoolId);
+        // If school is a populated object, add enabledFeatures to it
+        if (typeof schoolData === 'object' && schoolData !== null) {
+          schoolData = { ...schoolData.toObject ? schoolData.toObject() : schoolData, enabledFeatures };
+        }
       }
 
-      // Log login attempt (pending 2FA)
-      await logAction(req, {
-        action: 'LOGIN_PENDING_2FA',
-        module: 'AUTH',
-        details: { email: user.email, role: user.role }
-      });
-
       res.json({
-        requires2FA: true,
-        userId: user._id,
-        email: user.email.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => gp2 + '*'.repeat(gp3.length)),
-        message: 'A verification code has been sent to your email.'
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        customId: user.customId,
+        role: user.role,
+        branchScope: user.branchScope || 'SPECIFIC',
+        permissions: user.permissions || [],
+        school: schoolData,
+        schoolProfileCompleted: user.schoolProfileCompleted,
+        token: await issueTokens(res, user),
       });
     } else {
       res.status(401).json({ 
@@ -694,26 +674,37 @@ export const branchLogin = async (req, res) => {
       });
     }
 
-    // --- 2FA for Branch ---
-    const otp = generateOTP();
-    branch.otp = await hashOTP(otp);
-    branch.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-    branch.otpAttempts = 0;
-    await branch.save();
-
-    try {
-      await sendOTPEmail(branch.loginEmail, otp, { name: branch.name });
-    } catch (emailError) {
-      console.error('Failed to send OTP email:', emailError.message);
-      return res.status(500).json({ 
-        message: 'Failed to send verification code',
-        userMessage: 'We could not send the verification code to your email. Please try again later.',
-        error: emailError.message
-      });
+    // Resolve permissions from role
+    let permissions = [
+      'students.view', 'students.create', 'students.edit', 
+      'teachers.view', 
+      'classes.view', 
+      'subjects.view', 
+      'attendance.view', 'attendance.create', 
+      'exams.view', 'exams.create', 
+      'finance.view',
+      'schedules.view',
+      'settings.view'
+    ];
+    
+    if (branch.rbacRole && branch.rbacRole.permissions) {
+      permissions = branch.rbacRole.permissions;
     }
 
+    const branchUser = {
+      _id: branch._id,
+      name: branch.name,
+      email: branch.loginEmail,
+      role: 'branch_manager',
+      branch: branch._id,
+      school: branch.tenant,
+      branchScope: 'SPECIFIC',
+      rbacRole: branch.rbacRole,
+      permissions: permissions
+    };
+
     await logAction(req, {
-      action: 'BRANCH_LOGIN_PENDING_2FA',
+      action: 'BRANCH_LOGIN_SUCCESS',
       module: 'AUTH',
       tenantId: branch.tenant._id,
       branchId: branch._id,
@@ -721,11 +712,9 @@ export const branchLogin = async (req, res) => {
     });
 
     return res.json({
-      requires2FA: true,
-      userId: branch._id,
-      isBranchLogin: true, // Flag for frontend
-      email: branch.loginEmail.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => gp2 + '*'.repeat(gp3.length)),
-      message: 'A verification code has been sent to your branch email.'
+      ...branchUser,
+      school: branch.tenant,
+      token: await issueTokens(res, branchUser),
     });
   } catch (error) {
     console.error(`Branch login error: ${error.message}`);
@@ -938,47 +927,6 @@ export const login = async (req, res) => {
     user.lockUntil = undefined;
     user.lastLogin = Date.now();
     await user.save();
-
-    // --- 1. Email Verification Check ---
-    if (['schooladmin', 'school_admin', 'admin'].includes(user.role) && user.isEmailVerified === false) {
-      return res.status(403).json({
-        requiresVerification: true,
-        email: user.email,
-        message: 'Email not verified',
-        userMessage: 'Please verify your email address to continue.'
-      });
-    }
-
-    // --- 2. Two-Factor Authentication (2FA) ---
-    const rolesRequiring2FA = ['superadmin', 'super_admin', 'schooladmin', 'school_admin', 'admin', 'branchmanager', 'branch_manager'];
-    
-    if (rolesRequiring2FA.includes(user.role)) {
-      const otp = generateOTP();
-      user.otp = await hashOTP(otp);
-      user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-      user.otpAttempts = 0;
-      await user.save();
-
-      try {
-        await sendOTPEmail(user.email, otp, user);
-      } catch (emailError) {
-        console.error('Failed to send OTP email:', emailError.message);
-        return res.status(500).json({
-          message: 'Failed to send verification code',
-          userMessage: 'We could not send the verification code to your email. Please try again later.',
-          error: emailError.message
-        });
-      }
-
-      logAction(req, { action: '2FA_OTP_SENT', module: 'AUTH', targetId: user._id, details: { email: user.email } });
-
-      return res.json({
-        requires2FA: true,
-        userId: user._id,
-        email: user.email.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => gp2 + '*'.repeat(gp3.length)), // Mask email
-        message: 'A verification code has been sent to your email.'
-      });
-    }
 
     logAction(req, { action: 'LOGIN_SUCCESS', module: 'AUTH', targetId: user._id });
 

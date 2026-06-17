@@ -1,44 +1,86 @@
 import { Worker } from 'bullmq';
-import IORedis from 'ioredis';
-import { sendEmail } from '../utils/emailService.js';
+import { getWorkerConnection, isRedisAvailable } from '../config/redis.js';
+import { sendEmailDirect } from '../utils/emailService.js';
 import EmailLog from '../models/EmailLog.js';
 
-const connection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+const startWorker = async () => {
+  if (!isRedisAvailable()) {
+    console.warn('[EmailWorker] Redis not available (auth failed or not configured), skipping worker startup');
+    return;
+  }
 
-const worker = new Worker('email', async (job) => {
-  const data = job.data;
-  const { to, subject, html, text, type, metadata, emailLogId } = data;
-
-  // Update log to processing
-  if (emailLogId) {
-    try {
-      await EmailLog.findByIdAndUpdate(emailLogId, { status: 'processing', startedAt: new Date() });
-    } catch (err) {
-      console.error('[EmailWorker] Failed to update EmailLog to processing:', err.message);
-    }
+  const connection = getWorkerConnection();
+  if (!connection) {
+    console.warn('[EmailWorker] Redis not configured, skipping worker startup');
+    return;
   }
 
   try {
-    const result = await sendEmail({ email: to, subject, html, text, type, metadata });
-    if (emailLogId) {
-      await EmailLog.findByIdAndUpdate(emailLogId, { status: 'sent', messageId: result.messageId, sentAt: new Date(), response: result });
-    }
-    return { success: true };
-  } catch (error) {
-    console.error('[EmailWorker] sendEmail failed:', error.message);
-    if (emailLogId) {
-      await EmailLog.findByIdAndUpdate(emailLogId, { status: 'failed', error: error.message, lastAttemptAt: new Date() });
-    }
-    throw error;
+    await connection.connect();
+  } catch (err) {
+    console.error('[EmailWorker] ❌ Redis connection failed, worker NOT started:', err.message);
+    return;
   }
-}, { connection });
 
-worker.on('failed', (job, err) => {
-  console.error(`[EmailWorker] Job ${job.id} failed:`, err.message);
-});
+  const worker = new Worker(
+    'email',
+    async (job) => {
+      const data = job.data;
+      const { to, subject, html, text, type, metadata, emailLogId, schoolId } = data;
 
-worker.on('completed', (job) => {
-  console.log(`[EmailWorker] Job ${job.id} completed`);
-});
+      if (emailLogId) {
+        try {
+          await EmailLog.findByIdAndUpdate(emailLogId, {
+            status: 'processing',
+            startedAt: new Date(),
+            $inc: { attempts: 1 },
+          });
+        } catch (err) {
+          console.error('[EmailWorker] Failed to update EmailLog to processing:', err.message);
+        }
+      }
 
-console.log('[EmailWorker] Worker started');
+      try {
+        const result = await sendEmailDirect({
+          to, subject, html, text, type, metadata, emailLogId, schoolId,
+        });
+        console.log(`[EmailWorker] ✅ Job ${job.id} completed`);
+        return { success: true, messageId: result.messageId };
+      } catch (error) {
+        console.error(`[EmailWorker] ❌ Job ${job.id} failed:`, error.message);
+        if (emailLogId) {
+          await EmailLog.findByIdAndUpdate(emailLogId, {
+            status: 'failed',
+            error: error.message,
+            lastAttemptAt: new Date(),
+          });
+        }
+        throw error;
+      }
+    },
+    {
+      connection,
+      // CRITICAL: maxRetriesPerRequest must be null for BullMQ workers
+      // (already set in the shared connection, but set here as a safety net)
+      maxRetriesPerRequest: null,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 1000 },
+    }
+  );
+
+  worker.on('failed', (job, err) => {
+    console.error(`[EmailWorker] Job ${job?.id} failed after all attempts:`, err.message);
+  });
+
+  worker.on('completed', (job) => {
+    console.log(`[EmailWorker] Job ${job.id} completed`);
+  });
+
+  worker.on('error', (err) => {
+    console.error('[EmailWorker] Worker-level error:', err.message);
+  });
+
+  console.log('[EmailWorker] 🚀 Worker started and connected');
+};
+
+startWorker();

@@ -1184,22 +1184,25 @@ export const createSchoolAdmin = async (req, res) => {
       }
     });
 
-    // Generate Email Verification Token
-    const verificationToken = admin.generateEmailVerificationToken();
-    await admin.save();
-
+    // Optionally generate a verification token and attempt to send a verification email.
+    // IMPORTANT: failures to send email must not block account creation or roll back the user.
     try {
-      // Send Verification Email - CRITICAL: if this fails, we rollback the user!
-      await sendVerificationEmail(admin, verificationToken);
-    } catch (emailError) {
-      console.error('Failed to send verification email:', emailError.stack);
-      // If email fails, delete the user completely
-      await User.findByIdAndDelete(admin._id);
-      return res.status(500).json({
-        message: 'Failed to send verification email',
-        userMessage: 'Failed to send verification email. Please try again later.',
-        error: emailError.message
-      });
+      const verificationToken = admin.generateEmailVerificationToken();
+      await admin.save();
+      try {
+        await sendVerificationEmail(admin, verificationToken);
+      } catch (emailError) {
+        console.error('Non-blocking: failed to send verification email:', emailError.stack);
+        // Clear token so user isn't left with a stale token when email couldn't be sent
+        admin.emailVerificationToken = undefined;
+        admin.emailVerificationTokenExpires = undefined;
+        await admin.save();
+      }
+    } catch (err) {
+      // If token generation or save fails, log but do not block creation
+      console.error('Non-blocking: verification token generation failed:', err.stack);
+      // Ensure admin is saved at least once
+      if (!admin._id) await admin.save();
     }
 
     await logAction(req, {
@@ -1211,8 +1214,8 @@ export const createSchoolAdmin = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'School Admin created successfully. Verification email sent.',
-      userMessage: 'School Admin account created. A verification email has been sent to the provided address.',
+      message: 'School Admin created successfully.',
+      userMessage: 'School Admin account created.',
       admin: {
         _id: admin._id,
         name: admin.name,

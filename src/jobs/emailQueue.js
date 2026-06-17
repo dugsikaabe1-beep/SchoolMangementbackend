@@ -1,10 +1,38 @@
 import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
+import { getQueueConnection, isRedisAvailable } from '../config/redis.js';
 
-const connection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+let emailQueue;
 
-export const emailQueue = new Queue('email', { connection });
+const getQueue = () => {
+  if (emailQueue) return emailQueue;
+
+  if (!isRedisAvailable()) {
+    console.warn('[EmailQueue] Redis not available (auth failed or not configured); email queue disabled');
+    return null;
+  }
+
+  const connection = getQueueConnection();
+  if (!connection) {
+    console.warn('[EmailQueue] Redis not configured; email queue disabled');
+    return null;
+  }
+
+  emailQueue = new Queue('email', { connection });
+  console.log('[EmailQueue] ✅ Email queue connected');
+  return emailQueue;
+};
 
 export const enqueueEmail = async (jobData, opts = {}) => {
-  return await emailQueue.add('send-email', jobData, { attempts: opts.attempts || 3, backoff: { type: 'exponential', delay: 1000 } });
+  const q = getQueue();
+  if (!q) {
+    throw new Error('Email queue not available: Redis not configured or authentication failed');
+  }
+  return await q.add(
+    'send-email',
+    jobData,
+    {
+      attempts: opts.attempts || 3,
+      backoff: { type: 'exponential', delay: 1000 },
+    }
+  );
 };

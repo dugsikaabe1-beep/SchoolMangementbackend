@@ -249,7 +249,9 @@ app.use(requireProfileCompletion);
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Health check endpoint
+// Health check endpoints
+import { checkEmailHealth, validateEmailDeliveryConfig } from './utils/emailService.js';
+
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
@@ -257,6 +259,23 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development',
   });
+});
+
+app.get('/api/health/email', async (req, res) => {
+  try {
+    const health = await checkEmailHealth();
+    res.status(200).json({
+      success: true,
+      ...health
+    });
+  } catch (error) {
+    console.error('[Health] Email health check failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Email health check failed',
+      error: error.message
+    });
+  }
 });
 
 // API Versioning (v1)
