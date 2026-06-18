@@ -1,19 +1,56 @@
-// Twilio provider adapter (stub)
-import twilio from 'twilio';
+import axios from 'axios';
 
-const getClient = (config = {}) => {
+const getCredentials = (config = {}) => {
   const accountSid = config.accountSid || process.env.TWILIO_ACCOUNT_SID;
   const authToken = config.authToken || process.env.TWILIO_AUTH_TOKEN;
   if (!accountSid || !authToken) return null;
-  return twilio(accountSid, authToken);
+  return { accountSid, authToken };
+};
+
+const sendTwilioMessage = async ({ to, from, body, config = {} }) => {
+  const credentials = getCredentials(config);
+  if (!credentials) throw new Error('Twilio not configured');
+  if (!from) throw new Error('Twilio sender not configured');
+
+  const params = new URLSearchParams({ To: to, From: from, Body: body });
+  const response = await axios.post(
+    `https://api.twilio.com/2010-04-01/Accounts/${credentials.accountSid}/Messages.json`,
+    params,
+    {
+      auth: {
+        username: credentials.accountSid,
+        password: credentials.authToken,
+      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }
+  );
+
+  return {
+    providerMessageId: response.data?.sid,
+    status: 'sent',
+    response: response.data,
+  };
 };
 
 export const sendSMS = async ({ to, body, config = {} }) => {
-  const client = getClient(config);
-  if (!client) throw new Error('Twilio not configured');
-  const from = config.from || process.env.TWILIO_PHONE_FROM;
-  const msg = await client.messages.create({ body, to, from });
-  return { providerMessageId: msg.sid, status: 'sent', response: msg };
+  const from = config.from || process.env.TWILIO_PHONE_FROM || process.env.TWILIO_FROM_NUMBER;
+  return sendTwilioMessage({ to, from, body, config });
 };
 
-export default { sendSMS };
+export const sendWhatsApp = async ({ to, body, config = {} }) => {
+  const from = config.whatsappFrom || process.env.TWILIO_WHATSAPP_FROM;
+
+  const formatWhatsappAddress = (value) => {
+    if (!value) return value;
+    return value.startsWith('whatsapp:') ? value : `whatsapp:${value}`;
+  };
+
+  return sendTwilioMessage({
+    body,
+    to: formatWhatsappAddress(to),
+    from: formatWhatsappAddress(from),
+    config,
+  });
+};
+
+export default { sendSMS, sendWhatsApp };

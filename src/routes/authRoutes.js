@@ -18,6 +18,8 @@ import {
   verifyEmail,
   resendVerification,
   testEmail,
+  registerDevice,
+  unregisterDevice,
 } from '../controllers/authController.js';
 import { protect, authorizeRoles } from '../middlewares/authMiddleware.js';
 import {
@@ -59,5 +61,9 @@ router.post(
 router.get('/profile', protect, getProfile);
 router.put('/preferences', protect, updatePreferences);
 router.put('/reset-password', protect, resetPassword);
+
+// Device registration for push notifications
+router.post('/profile/device', protect, registerDevice);
+router.delete('/profile/device', protect, unregisterDevice);
 
 export default router;

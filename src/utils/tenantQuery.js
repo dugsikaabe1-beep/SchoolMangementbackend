@@ -4,6 +4,7 @@
  */
 
 import mongoose from 'mongoose';
+import Branch from '../models/Branch.js';
 
 /**
  * Require a school-scoped request and return a filter fragment `{ school: ObjectId }`.
@@ -43,6 +44,40 @@ export const tenantFilter = (req, extra = {}) => {
     filter.branch = req.branchId;
   }
   
+  return filter;
+};
+
+/**
+ * Return the concrete branch ids this request may access inside the active tenant.
+ * Admins with all-branch scope receive every branch in the school; specific-scope
+ * users are locked to their assigned/request branch.
+ */
+export const allowedBranchIds = async (req) => {
+  if (!req?.schoolId) {
+    throw new Error('CRITICAL SECURITY ERROR: branch scope without schoolId');
+  }
+
+  if (req.branchId && mongoose.Types.ObjectId.isValid(req.branchId)) {
+    return [req.branchId];
+  }
+
+  const branches = await Branch.find({
+    tenant: req.schoolId,
+    isDeleted: { $ne: true },
+  }).select('_id').lean();
+
+  return branches.map((branch) => branch._id);
+};
+
+/**
+ * Merge tenant scope with an explicit branch allow-list for branch-owned records.
+ */
+export const tenantBranchFilter = async (req, extra = {}) => {
+  const filter = tenantFilter(req, extra);
+  const branchIds = await allowedBranchIds(req);
+
+  filter.branch = { $in: branchIds };
+
   return filter;
 };
 

@@ -33,7 +33,7 @@ import ApiActivityLog from '../models/ApiActivityLog.js';
 import SupportTicket from '../models/SupportTicket.js';
 import DataArchive from '../models/DataArchive.js';
 import ScheduledReport from '../models/ScheduledReport.js';
-import { tenantFilter } from '../utils/tenantQuery.js';
+import { tenantFilter, tenantBranchFilter } from '../utils/tenantQuery.js';
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -185,7 +185,7 @@ const makeSearch = ({
 }) => async (req, regex) => {
   if (!hasSearchAccess(req, type)) return [];
 
-  const filter = branchAware ? tenantFilter(req, base) : { ...base, school: req.schoolId };
+  const filter = branchAware ? await tenantBranchFilter(req, base) : tenantFilter(req, base);
   filter.$or = fields.map((field) => ({ [field]: regex }));
 
   const query = Model.find(filter).limit(limit).lean();
@@ -317,6 +317,13 @@ const searches = [
  */
 export const globalSearch = async (req, res) => {
   const q = (req.query.q || req.query.query || '').trim();
+
+  if (!req.schoolId) {
+    return res.status(403).json({
+      success: false,
+      message: 'Tenant context required for global search',
+    });
+  }
 
   if (!q || q.length < 2) {
     return res.json({ success: true, results: [] });

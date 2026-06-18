@@ -1257,6 +1257,65 @@ export const updatePreferences = async (req, res) => {
   }
 };
 
+// @desc    Register device token for push notifications
+// @route   POST /api/auth/profile/device
+// @access  Private
+export const registerDevice = async (req, res) => {
+  try {
+    const { token, platform = 'fcm', deviceId, deviceName } = req.body || {};
+    if (!token) return res.status(400).json({ success: false, message: 'Device token required' });
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    user.metadata = user.metadata || {};
+    if (platform === 'expo') {
+      user.metadata.expoPushToken = token;
+    } else {
+      user.metadata.pushToken = token;
+    }
+
+    user.devices = user.devices || [];
+    if (deviceId) {
+      const idx = user.devices.findIndex((d) => d.deviceId === deviceId);
+      const deviceEntry = { deviceId, deviceName: deviceName || deviceId, lastUsed: new Date(), ip: req.ip };
+      if (idx >= 0) user.devices[idx] = { ...user.devices[idx], ...deviceEntry };
+      else user.devices.push(deviceEntry);
+    }
+
+    await user.save();
+
+    res.json({ success: true, message: 'Device registered', data: { token, platform } });
+  } catch (error) {
+    console.error('[AuthController] registerDevice error:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to register device' });
+  }
+};
+
+// @desc    Unregister device token
+// @route   DELETE /api/auth/profile/device
+// @access  Private
+export const unregisterDevice = async (req, res) => {
+  try {
+    const { deviceId, platform = 'fcm' } = req.body || {};
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    if (platform === 'expo') delete user.metadata?.expoPushToken;
+    else delete user.metadata?.pushToken;
+
+    if (deviceId && user.devices && user.devices.length) {
+      user.devices = user.devices.filter((d) => d.deviceId !== deviceId);
+    }
+
+    await user.save();
+    res.json({ success: true, message: 'Device unregistered' });
+  } catch (error) {
+    console.error('[AuthController] unregisterDevice error:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to unregister device' });
+  }
+};
+
 // @desc    Reset password (Self or Admin)
 // @route   PUT /api/auth/reset-password
 // @access  Private (Self) or Private/Admin (For others)

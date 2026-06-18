@@ -6,6 +6,9 @@ import { broadcastNotification, sendNotification } from '../utils/notificationSe
 import NotificationTemplate from '../models/NotificationTemplate.js';
 import NotificationTemplateTranslation from '../models/NotificationTemplateTranslation.js';
 import { renderTemplate } from '../utils/templateUtils.js';
+import { resolveProvider } from '../services/providerResolver.js';
+import twilioProvider from '../services/providers/twilioProvider.js';
+import fcmProvider from '../services/providers/fcmProvider.js';
 
 const router = express.Router();
 
@@ -266,6 +269,45 @@ router.post('/', requireNotificationManager, async (req, res) => {
       message: 'Notification sent',
     });
   } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+/**
+ * Admin test route to send an immediate test message via provider (SMS/WhatsApp/Push)
+ */
+router.post('/test', requireNotificationManager, async (req, res) => {
+  try {
+    const { channel, to, message, title } = req.body || {};
+    if (!channel || !to) return res.status(400).json({ success: false, message: 'channel and to are required' });
+
+    const schoolId = getSchoolId(req);
+    const providerConfig = await resolveProvider({ tenantId: req.schoolId, schoolId, channel: channel === 'sms' ? 'sms' : channel });
+
+    if (channel === 'sms') {
+      if (!providerConfig) return res.status(400).json({ success: false, message: 'No SMS provider configured' });
+      const result = await twilioProvider.sendSMS({ to, body: message || title || 'Test SMS', config: providerConfig.config });
+      return res.json({ success: true, provider: providerConfig.providerKey, result });
+    }
+
+    if (channel === 'whatsapp') {
+      if (!providerConfig) return res.status(400).json({ success: false, message: 'No WhatsApp provider configured' });
+      const result = await twilioProvider.sendWhatsApp({ to, body: message || title || 'Test WhatsApp', config: providerConfig.config });
+      return res.json({ success: true, provider: providerConfig.providerKey, result });
+    }
+
+    if (channel === 'push') {
+      // 'to' should be a device token
+      if (!process.env.FCM_SERVER_KEY && !(providerConfig && providerConfig.config)) {
+        return res.status(400).json({ success: false, message: 'FCM not configured' });
+      }
+      const result = await fcmProvider.sendPush({ token: to, title: title || 'Test Push', body: message || 'Test notification', data: { _providerConfig: providerConfig?.config || {} } });
+      return res.json({ success: true, provider: providerConfig?.providerKey || 'fcm', result });
+    }
+
+    return res.status(400).json({ success: false, message: 'Unsupported channel' });
+  } catch (error) {
+    console.error('[NotificationRoutes] test send error:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });

@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "tenantId": "6a3225a8ce507bfc3f96ee9f",
+    "branchId": null,
+    "createdBy": null,
+    "label": "daily",
+    "createdAt": "2026-06-17T22:00:03.164Z",
+    "version": 1
+  },
+  "collections": {
+    "users": [
+      {
+        "_id": "6a322569ce507bfc3f96ee95",
+        "name": "Mohamedciise892",
+        "monthlyFees": 0,
+        "email": "mohamedciise892@gmail.com",
+        "password": "$2a$12$qyyULzcxAPvezvXjcE.6y.xGwPNNp5FuQXLRtfKG/cjBxjuoltvO2",
+        "credentialsGenerated": true,
+        "role": "schooladmin",
+        "tokenVersion": 0,
+        "isSuperAdmin": false,
+        "schoolProfileCompleted": true,
+        "branchScope": "SPECIFIC",
+        "subjects": [],
+        "status": "active",
+        "linkedStudents": [],
+        "studentMode": "Full-time",
+        "permissions": [],
+        "loginAttempts": 0,
+        "refreshTokens": [],
+        "isDeleted": false,
+        "twoFactorEnabled": false,
+        "twoFactorRecoveryCodes": [],
+        "otpAttempts": 0,
+        "isEmailVerified": false,
+        "temporaryExamAccess": false,
+        "admissionDate": "2026-06-17T04:41:13.745Z",
+        "permissionOverrides": [],
+        "devices": [],
+        "loginHistory": [],
+        "activeSessions": [],
+        "temporaryAccessHistory": [],
+        "createdAt": "2026-06-17T04:41:13.745Z",
+        "updatedAt": "2026-06-17T04:42:16.483Z",
+        "__v": 0,
+        "lastLogin": "2026-06-17T04:41:49.483Z",
+        "school": "6a3225a8ce507bfc3f96ee9f"
+      }
+    ]
+  }
+}

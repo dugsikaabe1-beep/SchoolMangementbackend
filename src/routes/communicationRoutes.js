@@ -27,12 +27,14 @@ import {
 } from '../controllers/communicationController.js';
 import { protect } from '../middlewares/authMiddleware.js';
 import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { branchIsolation } from '../middlewares/branchMiddleware.js';
 
 const router = express.Router();
 
 // All routes require authentication and tenant context
 router.use(protect);
 router.use(injectOwnership);
+router.use(branchIsolation);
 
 // ==============================================
 // COMMUNICATION MESSAGES

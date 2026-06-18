@@ -21,11 +21,12 @@ export const resolveProvider = async ({ tenantId, schoolId, channel }) => {
   // Fallbacks based on environment variables
   if (channel === 'sms') {
     if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) return { providerKey: 'twilio_sms', providerType: 'sms' };
-    if (process.env.AT_API_KEY && process.env.AT_USERNAME) return { providerKey: 'africastalking_sms', providerType: 'sms' };
   }
 
   if (channel === 'whatsapp') {
-    if (process.env.META_WHATSAPP_TOKEN) return { providerKey: 'meta_whatsapp', providerType: 'whatsapp' };
+    if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM) {
+      return { providerKey: 'twilio_whatsapp', providerType: 'whatsapp' };
+    }
   }
 
   if (channel === 'push') {

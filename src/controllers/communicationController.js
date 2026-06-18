@@ -21,6 +21,11 @@ import { sendNotification, broadcastNotification, sendToClassParents, getDeliver
 // COMMUNICATION MESSAGES (COMPOSER, DRAFTS, SENT)
 // ==============================================
 
+const applyBranchScope = (req, filter = {}) => {
+  if (req.branchId) filter.branch = req.branchId;
+  return filter;
+};
+
 export const getCommunicationMessages = asyncHandler(async (req, res) => {
   const { status, page = 1, limit = 20, startDate, endDate } = req.query;
   
@@ -38,9 +43,7 @@ export const getCommunicationMessages = asyncHandler(async (req, res) => {
     if (endDate) filter.createdAt.$lte = new Date(endDate);
   }
   
-  if (req.user.role === 'branchmanager' && req.user.branch) {
-    filter.branch = req.user.branch;
-  }
+  applyBranchScope(req, filter);
 
   const messages = await CommunicationMessage.find(filter)
     .sort({ createdAt: -1 })
@@ -68,7 +71,7 @@ export const getCommunicationMessages = asyncHandler(async (req, res) => {
 export const getCommunicationMessageById = asyncHandler(async (req, res) => {
   const message = await CommunicationMessage.findOne({
     _id: req.params.id,
-    school: req.schoolId
+    ...applyBranchScope(req, { school: req.schoolId })
   }).populate('createdBy', 'name email')
     .populate('templateId', 'name code');
 
@@ -104,7 +107,7 @@ export const createCommunicationMessage = asyncHandler(async (req, res) => {
   const messageData = {
     tenantId: req.schoolId,
     school: req.schoolId,
-    branch: req.user.branch,
+    branch: req.branchId || req.user.branch,
     title,
     subject,
     body,
@@ -139,7 +142,7 @@ export const createCommunicationMessage = asyncHandler(async (req, res) => {
 export const updateCommunicationMessage = asyncHandler(async (req, res) => {
   const message = await CommunicationMessage.findOne({
     _id: req.params.id,
-    school: req.schoolId
+    ...applyBranchScope(req, { school: req.schoolId })
   });
 
   if (!message) {
@@ -200,7 +203,7 @@ export const updateCommunicationMessage = asyncHandler(async (req, res) => {
 export const deleteCommunicationMessage = asyncHandler(async (req, res) => {
   const message = await CommunicationMessage.findOne({
     _id: req.params.id,
-    school: req.schoolId
+    ...applyBranchScope(req, { school: req.schoolId })
   });
 
   if (!message) {
@@ -226,7 +229,7 @@ export const deleteCommunicationMessage = asyncHandler(async (req, res) => {
 export const duplicateCommunicationMessage = asyncHandler(async (req, res) => {
   const originalMessage = await CommunicationMessage.findOne({
     _id: req.params.id,
-    school: req.schoolId
+    ...applyBranchScope(req, { school: req.schoolId })
   });
 
   if (!originalMessage) {
@@ -239,7 +242,7 @@ export const duplicateCommunicationMessage = asyncHandler(async (req, res) => {
   const duplicatedMessage = await CommunicationMessage.create({
     tenantId: req.schoolId,
     school: req.schoolId,
-    branch: req.user.branch,
+    branch: req.branchId || req.user.branch,
     title: `${title} (Copy)`,
     subject,
     body,
@@ -317,7 +320,7 @@ export const previewMessage = asyncHandler(async (req, res) => {
 export const sendCommunicationMessage = asyncHandler(async (req, res) => {
   const message = await CommunicationMessage.findOne({
     _id: req.params.id,
-    school: req.schoolId
+    ...applyBranchScope(req, { school: req.schoolId })
   });
 
   if (!message) {
@@ -345,7 +348,8 @@ export const sendCommunicationMessage = asyncHandler(async (req, res) => {
         school: req.schoolId,
         role: 'student',
         status: 'active',
-        isDeleted: false
+        isDeleted: false,
+        ...(req.branchId ? { branch: req.branchId } : {})
       });
       resolvedRecipientIds.push(...students.map(s => s._id.toString()));
       
@@ -356,7 +360,8 @@ export const sendCommunicationMessage = asyncHandler(async (req, res) => {
           role: 'parent',
           linkedStudents: student._id,
           status: 'active',
-          isDeleted: false
+          isDeleted: false,
+          ...(req.branchId ? { branch: req.branchId } : {})
         });
         resolvedRecipientIds.push(...parents.map(p => p._id.toString()));
       }
@@ -372,7 +377,8 @@ export const sendCommunicationMessage = asyncHandler(async (req, res) => {
       const users = await User.find({
         school: req.schoolId,
         status: 'active',
-        isDeleted: false
+        isDeleted: false,
+        ...(req.branchId ? { branch: req.branchId } : {})
       });
       resolvedRecipientIds.push(...users.map(u => u._id.toString()));
     }
@@ -388,7 +394,7 @@ export const sendCommunicationMessage = asyncHandler(async (req, res) => {
   const result = await broadcastNotification({
     recipientIds: uniqueRecipientIds,
     schoolId: req.schoolId,
-    branchId: req.user.branch,
+    branchId: req.branchId || req.user.branch,
     title: message.title,
     message: message.body,
     type: 'announcement',
@@ -428,6 +434,7 @@ export const getCommunicationUsage = asyncHandler(async (req, res) => {
   const { startDate, endDate, period = 'monthly' } = req.query;
   
   const dateFilter = { school: req.schoolId, period };
+  applyBranchScope(req, dateFilter);
   
   if (startDate) dateFilter.date = { $gte: new Date(startDate) };
   if (endDate) dateFilter.date = { ...dateFilter.date, $lte: new Date(endDate) };
@@ -605,6 +612,7 @@ export const getUserNotifications = asyncHandler(async (req, res) => {
     recipient: req.user._id,
     school: req.schoolId
   };
+  applyBranchScope(req, query);
 
   if (status) {
     query.status = status;
@@ -689,12 +697,13 @@ export const searchRecipients = asyncHandler(async (req, res) => {
     isDeleted: false,
     status: 'active'
   };
+  applyBranchScope(req, filter);
 
   if (role) {
     filter.role = role;
   }
 
-  if (branchId && req.user.role === 'branchmanager') {
+  if (branchId && !req.branchId) {
     filter.branch = branchId;
   }
 
@@ -767,7 +776,7 @@ export const getCommunicationHealth = asyncHandler(async (req, res) => {
   };
   
   const stats = await DeliveryLog.aggregate([
-    { $match: { school: schoolId } },
+    { $match: applyBranchScope(req, { school: schoolId }) },
     {
       $group: {
         _id: '$status',
@@ -789,18 +798,20 @@ export const getCommunicationHealth = asyncHandler(async (req, res) => {
   
   const pendingCount = await CommunicationMessage.countDocuments({
     school: schoolId,
-    status: { $in: ['queued', 'sending'] }
+    status: { $in: ['queued', 'sending'] },
+    ...(req.branchId ? { branch: req.branchId } : {})
   });
   health.queue.pending = pendingCount;
   
   const retryingCount = await DeliveryLog.countDocuments({
     school: schoolId,
     status: 'queued',
-    attempt: { $gt: 0 }
+    attempt: { $gt: 0 },
+    ...(req.branchId ? { branch: req.branchId } : {})
   });
   health.queue.retrying = retryingCount;
   
-  const lastProcessed = await DeliveryLog.findOne({ school: schoolId, status: { $in: ['sent', 'delivered', 'opened'] } })
+  const lastProcessed = await DeliveryLog.findOne(applyBranchScope(req, { school: schoolId, status: { $in: ['sent', 'delivered', 'opened'] } }))
     .sort({ createdAt: -1 });
   if (lastProcessed) health.queue.lastProcessed = lastProcessed.createdAt;
   
@@ -828,10 +839,11 @@ export const getDeliveryReports = asyncHandler(async (req, res) => {
   const filter = {
     school: req.schoolId
   };
+  applyBranchScope(req, filter);
   
   if (status) filter.status = status;
   if (channel) filter.channel = channel;
-  if (branchId) filter.branch = branchId;
+  if (branchId && !req.branchId) filter.branch = branchId;
   
   if (startDate || endDate) {
     filter.createdAt = {};
@@ -872,6 +884,7 @@ export const getInvalidContacts = asyncHandler(async (req, res) => {
   const filter = {
     school: req.schoolId
   };
+  applyBranchScope(req, filter);
   
   if (contactType) filter.contactType = contactType;
   if (isResolved !== undefined) filter.isResolved = isResolved === 'true';
@@ -1004,6 +1017,7 @@ export const getSmartRecipientFilters = asyncHandler(async (req, res) => {
     isDeleted: false,
     status: 'active'
   };
+  applyBranchScope(req, filter);
   
   if (role) filter.role = role;
   if (classes) filter.class = { $in: Array.isArray(classes) ? classes : [classes] };
@@ -1032,7 +1046,7 @@ export const globalSearch = asyncHandler(async (req, res) => {
   
   const [messages, logs, recipients] = await Promise.all([
     CommunicationMessage.find({
-      school: schoolId,
+      ...applyBranchScope(req, { school: schoolId }),
       $or: [
         { title: { $regex: q, $options: 'i' } },
         { subject: { $regex: q, $options: 'i' } },
@@ -1043,7 +1057,7 @@ export const globalSearch = asyncHandler(async (req, res) => {
       .limit(10)
       .lean(),
     DeliveryLog.find({
-      school: schoolId,
+      ...applyBranchScope(req, { school: schoolId }),
       $or: [
         { 'to.name': { $regex: q, $options: 'i' } },
         { 'to.email': { $regex: q, $options: 'i' } },
@@ -1056,6 +1070,7 @@ export const globalSearch = asyncHandler(async (req, res) => {
     User.find({
       school: schoolId,
       isDeleted: false,
+      ...(req.branchId ? { branch: req.branchId } : {}),
       $or: [
         { name: { $regex: q, $options: 'i' } },
         { email: { $regex: q, $options: 'i' } },
