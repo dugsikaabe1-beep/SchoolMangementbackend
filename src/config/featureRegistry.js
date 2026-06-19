@@ -32,12 +32,14 @@ export const FEATURE_REGISTRY = [
   { code: 'academic-years', label: 'Academic Years',        category: 'Academic' },
   { code: 'promotions',     label: 'Student Promotion',     category: 'Academic' },
   { code: 'admissions',     label: 'Online Admission',      category: 'Academic' },
+  { code: 'automatic-timetabling', label: 'Automatic Timetabling', category: 'Academic' },
 
   // ── Logistics ─────────────────────────────────────────────────────────
   { code: 'hostel',         label: 'Hostel Management',     category: 'Logistics' },
   { code: 'transport',      label: 'Transport / Bus',       category: 'Logistics' },
   { code: 'library',        label: 'Library Management',    category: 'Logistics' },
   { code: 'assets',         label: 'Asset Management',      category: 'Logistics' },
+  { code: 'visitors',       label: 'Visitor Management',    category: 'Logistics' },
 
   // ── Branch ────────────────────────────────────────────────────────────
   { code: 'branches',       label: 'Multi Branch Support',  category: 'Branch' },
@@ -47,6 +49,10 @@ export const FEATURE_REGISTRY = [
   { code: 'invoices',       label: 'Invoices',              category: 'Finance' },
   { code: 'discounts',      label: 'Discounts',             category: 'Finance' },
   { code: 'revenue-reports',label: 'Revenue Reports',       category: 'Finance' },
+  { code: 'enterprise-finance', label: 'Enterprise Finance', category: 'Finance' },
+  { code: 'payroll',        label: 'Payroll Management',    category: 'Finance' },
+  { code: 'procurement',    label: 'Procurement',           category: 'Finance' },
+  { code: 'revenue-forecast', label: 'Revenue Forecasting', category: 'Finance' },
 
   // ── Communication ─────────────────────────────────────────────────────
   { code: 'announcements',     label: 'Announcements',         category: 'Communication' },
@@ -62,6 +68,7 @@ export const FEATURE_REGISTRY = [
   { code: 'parent-app',     label: 'Parent Mobile App',     category: 'Mobile App' },
   { code: 'student-app',    label: 'Student Mobile App',    category: 'Mobile App' },
   { code: 'teacher-app',    label: 'Teacher Mobile App',    category: 'Mobile App' },
+  { code: 'mobile-offline', label: 'Mobile Offline Mode',   category: 'Mobile App' },
 
   // ── User Management ───────────────────────────────────────────────────
   { code: 'roles',          label: 'Roles',                 category: 'User Management' },
@@ -80,6 +87,8 @@ export const FEATURE_REGISTRY = [
   { code: 'reports',           label: 'Reports',            category: 'Reports' },
   { code: 'analytics',         label: 'Feature Usage Analytics', category: 'Reports' },
   { code: 'timeline',          label: 'Activity Timeline',  category: 'Reports' },
+  { code: 'business-intelligence', label: 'Business Intelligence', category: 'Reports' },
+  { code: 'executive-dashboard', label: 'Executive Dashboard', category: 'Reports' },
 
   // ── System ────────────────────────────────────────────────────────────
   { code: 'documents',      label: 'Document Management',   category: 'System' },
@@ -91,6 +100,18 @@ export const FEATURE_REGISTRY = [
   { code: 'support',        label: 'Support Tickets',       category: 'System' },
   { code: 'data-recovery',  label: 'Data Recovery Center',  category: 'System' },
   { code: 'duplicate-detection', label: 'Duplicate Detection', category: 'System' },
+
+  // ── AI & Analytics ────────────────────────────────────────────────────
+  { code: 'ai-learning-assistant', label: 'AI Learning Assistant', category: 'AI & Analytics' },
+  { code: 'risk-assessment',  label: 'Student Risk Assessment', category: 'AI & Analytics' },
+  { code: 'ai-parent-reports', label: 'AI Parent Reports', category: 'AI & Analytics' },
+  { code: 'performance-tracking', label: 'Performance Tracking', category: 'AI & Analytics' },
+
+  // ── Student Life ──────────────────────────────────────────────────────
+  { code: 'discipline',       label: 'Discipline Management', category: 'Student Life' },
+  { code: 'health',           label: 'Health Records', category: 'Student Life' },
+  { code: 'portfolios',       label: 'Digital Portfolios', category: 'Student Life' },
+  { code: 'alumni',           label: 'Alumni Management', category: 'Student Life' },
 ];
 
 /**
@@ -123,8 +144,8 @@ export const STARTER_FEATURES = [
   'attendance', 'schedules', 'academic-years',
   'announcements', 'settings', 'support',
   // Core communication features - always included
-  'notifications', 'push-notifications', 'sms', 'email-automation',
-  'whatsapp', 'bulk-messaging', 'automated-alerts'
+  'notifications', 'push-notifications', 'email-automation',
+  'bulk-messaging', 'automated-alerts'
 ];
 
 /**
@@ -138,9 +159,28 @@ export const PROFESSIONAL_FEATURES = [
   'roles', 'permissions', 'website', 'events',
   'academic-reports', 'attendance-reports', 'student-reports',
   'documents', 'export', 'onboarding',
+  'hostel', 'transport', 'library', 'assets',
+  'certificates', 'id-cards', 'admissions',
+  'discounts', 'invoices', 'revenue-reports',
+  'reports', 'timeline',
 ];
 
 /**
- * Enterprise = ALL features.
+ * Default features for Enterprise plan.
  */
-export const ENTERPRISE_FEATURES = ['ALL_MODULES'];
+export const ENTERPRISE_FEATURES = [
+  ...PROFESSIONAL_FEATURES,
+  'ai-learning-assistant', 'risk-assessment', 'ai-parent-reports', 'performance-tracking',
+  'discipline', 'health', 'portfolios', 'alumni',
+  'enterprise-finance', 'payroll', 'procurement', 'revenue-forecast',
+  'automatic-timetabling', 'visitors',
+  'mobile-offline',
+  'business-intelligence', 'executive-dashboard',
+  'audit-logs', 'backups', 'data-recovery', 'duplicate-detection',
+  'analytics',
+];
+
+/**
+ * Legacy Enterprise = ALL features.
+ */
+export const ENTERPRISE_LEGACY_FEATURES = ['ALL_MODULES'];

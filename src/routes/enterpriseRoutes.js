@@ -70,6 +70,46 @@ import {
   restoreArchive,
   exportEnterpriseReport
 } from '../controllers/enterpriseFinalController.js';
+import {
+  getDisciplines,
+  createDiscipline,
+  updateDiscipline,
+  deleteDiscipline,
+  getHealthRecords,
+  createHealthRecord,
+  updateHealthRecord,
+  deleteHealthRecord,
+  getPortfolios,
+  createPortfolio,
+  updatePortfolio,
+  deletePortfolio,
+  getAlumni,
+  createAlumni,
+  updateAlumni,
+  deleteAlumni,
+  getVisitors,
+  createVisitor,
+  updateVisitor,
+  deleteVisitor,
+  getProcurements,
+  createProcurement,
+  updateProcurement,
+  deleteProcurement,
+  getEnterpriseFinance,
+  createEnterpriseFinance,
+  updateEnterpriseFinance,
+  deleteEnterpriseFinance,
+  getRevenueForecasts,
+  createRevenueForecast,
+  updateRevenueForecast,
+  deleteRevenueForecast,
+  getPayrolls,
+  createPayroll,
+  updatePayroll,
+  deletePayroll,
+  getBusinessIntelligence,
+  getExecutiveDashboard
+} from '../controllers/enterpriseFeaturesController.js';
 
 const router = express.Router();
 
@@ -188,5 +228,95 @@ router.route('/final/archives')
   .get(checkPermission('settings.view'), branchIsolation, listArchives)
   .post(checkPermission('settings.manage'), branchIsolation, createArchive);
 router.post('/final/archives/:id/restore', checkPermission('settings.manage'), branchIsolation, restoreArchive);
+
+// New Enterprise Features
+// Discipline Management
+router.use('/discipline', checkModuleAccess('discipline'));
+router.route('/discipline')
+  .get(checkPermission('students.view'), branchIsolation, getDisciplines)
+  .post(checkPermission('students.manage'), branchIsolation, createDiscipline);
+router.route('/discipline/:id')
+  .put(checkPermission('students.manage'), branchIsolation, updateDiscipline)
+  .delete(checkPermission('students.manage'), branchIsolation, deleteDiscipline);
+
+// Health Records Management
+router.use('/health-records', checkModuleAccess('health'));
+router.route('/health-records')
+  .get(checkPermission('students.view'), branchIsolation, getHealthRecords)
+  .post(checkPermission('students.manage'), branchIsolation, createHealthRecord);
+router.route('/health-records/:id')
+  .put(checkPermission('students.manage'), branchIsolation, updateHealthRecord)
+  .delete(checkPermission('students.manage'), branchIsolation, deleteHealthRecord);
+
+// Portfolio Management
+router.use('/portfolios', checkModuleAccess('portfolios'));
+router.route('/portfolios')
+  .get(checkPermission('students.view'), branchIsolation, getPortfolios)
+  .post(checkPermission('students.manage'), branchIsolation, createPortfolio);
+router.route('/portfolios/:id')
+  .put(checkPermission('students.manage'), branchIsolation, updatePortfolio)
+  .delete(checkPermission('students.manage'), branchIsolation, deletePortfolio);
+
+// Alumni Management
+router.use('/alumni', checkModuleAccess('alumni'));
+router.route('/alumni')
+  .get(checkPermission('students.view'), branchIsolation, getAlumni)
+  .post(checkPermission('students.manage'), branchIsolation, createAlumni);
+router.route('/alumni/:id')
+  .put(checkPermission('students.manage'), branchIsolation, updateAlumni)
+  .delete(checkPermission('students.manage'), branchIsolation, deleteAlumni);
+
+// Visitor Management
+router.use('/visitors', checkModuleAccess('visitors'));
+router.route('/visitors')
+  .get(checkPermission('settings.view'), branchIsolation, getVisitors)
+  .post(checkPermission('settings.manage'), branchIsolation, createVisitor);
+router.route('/visitors/:id')
+  .put(checkPermission('settings.manage'), branchIsolation, updateVisitor)
+  .delete(checkPermission('settings.manage'), branchIsolation, deleteVisitor);
+
+// Procurement Management
+router.use('/procurement', checkModuleAccess('procurement'));
+router.route('/procurement')
+  .get(checkPermission('finance.view'), branchIsolation, getProcurements)
+  .post(checkPermission('finance.manage'), branchIsolation, createProcurement);
+router.route('/procurement/:id')
+  .put(checkPermission('finance.manage'), branchIsolation, updateProcurement)
+  .delete(checkPermission('finance.manage'), branchIsolation, deleteProcurement);
+
+// Enterprise Finance
+router.use('/enterprise-finance', checkModuleAccess('enterprise-finance'));
+router.route('/enterprise-finance')
+  .get(checkPermission('finance.view'), branchIsolation, getEnterpriseFinance)
+  .post(checkPermission('finance.manage'), branchIsolation, createEnterpriseFinance);
+router.route('/enterprise-finance/:id')
+  .put(checkPermission('finance.manage'), branchIsolation, updateEnterpriseFinance)
+  .delete(checkPermission('finance.manage'), branchIsolation, deleteEnterpriseFinance);
+
+// Revenue Forecast
+router.use('/revenue-forecast', checkModuleAccess('revenue-forecast'));
+router.route('/revenue-forecast')
+  .get(checkPermission('finance.view'), branchIsolation, getRevenueForecasts)
+  .post(checkPermission('finance.manage'), branchIsolation, createRevenueForecast);
+router.route('/revenue-forecast/:id')
+  .put(checkPermission('finance.manage'), branchIsolation, updateRevenueForecast)
+  .delete(checkPermission('finance.manage'), branchIsolation, deleteRevenueForecast);
+
+// Payroll Management
+router.use('/payroll', checkModuleAccess('payroll'));
+router.route('/payroll')
+  .get(checkPermission('finance.view'), branchIsolation, getPayrolls)
+  .post(checkPermission('finance.manage'), branchIsolation, createPayroll);
+router.route('/payroll/:id')
+  .put(checkPermission('finance.manage'), branchIsolation, updatePayroll)
+  .delete(checkPermission('finance.manage'), branchIsolation, deletePayroll);
+
+// Business Intelligence
+router.use('/business-intelligence', checkModuleAccess('business-intelligence'));
+router.get('/business-intelligence', checkPermission('settings.view'), branchIsolation, getBusinessIntelligence);
+
+// Executive Dashboard
+router.use('/executive-dashboard', checkModuleAccess('executive-dashboard'));
+router.get('/executive-dashboard', checkPermission('settings.manage'), branchIsolation, getExecutiveDashboard);
 
 export default router;

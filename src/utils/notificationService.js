@@ -2,7 +2,6 @@ import Notification from '../models/Notification.js';
 import School from '../models/School.js';
 import User from '../models/User.js';
 import DeliveryLog from '../models/DeliveryLog.js';
-import ChannelProvider from '../models/ChannelProvider.js';
 import nodemailer from 'nodemailer';
 import { emitToUser, emitToSchool } from './socket.js';
 
@@ -44,7 +43,6 @@ async function resolveRecipient(recipientId, schoolId) {
     role: user.role,
     email: user.email,
     phone: user.phone,
-    whatsappNumber: user.phone, // Default to phone if no separate WhatsApp field
     schoolId: user.school,
     branchId: user.branch
   };
@@ -255,63 +253,7 @@ export const sendNotification = async ({
       }
     }
 
-    // STEP 6: SMS (if requested and recipient has phone)
-    if (channels.includes('sms') && recipient.phone) {
-      try {
-        // Create queued delivery log for SMS processing
-        const smsLog = await DeliveryLog.create({
-          notificationId: notification._id,
-          tenantId: schoolId,
-          school: schoolId,
-          branch: branchId || recipient.branchId,
-          channel: 'sms',
-          provider: 'queued_sms',
-          to: {
-            userId: recipient.userId,
-            phone: recipient.phone,
-            name: recipient.name,
-            role: recipient.role
-          },
-          status: 'queued'
-        });
-        usedChannels.push('sms');
-        deliveryLogs.push(smsLog);
-        console.log(`[NotificationService] SMS queued for ${recipient.phone}`);
-      } catch (smsError) {
-        console.error('[NotificationService] SMS queue failed:', smsError.message);
-        notification.deliverySummary.failed++;
-      }
-    }
-
-    // STEP 7: WhatsApp (if requested and recipient has phone/whatsapp)
-    if (channels.includes('whatsapp') && recipient.whatsappNumber) {
-      try {
-        // Create queued delivery log for WhatsApp processing
-        const whatsappLog = await DeliveryLog.create({
-          notificationId: notification._id,
-          tenantId: schoolId,
-          school: schoolId,
-          branch: branchId || recipient.branchId,
-          channel: 'whatsapp',
-          provider: 'queued_whatsapp',
-          to: {
-            userId: recipient.userId,
-            phone: recipient.whatsappNumber,
-            name: recipient.name,
-            role: recipient.role
-          },
-          status: 'queued'
-        });
-        usedChannels.push('whatsapp');
-        deliveryLogs.push(whatsappLog);
-        console.log(`[NotificationService] WhatsApp queued for ${recipient.whatsappNumber}`);
-      } catch (waError) {
-        console.error('[NotificationService] WhatsApp queue failed:', waError.message);
-        notification.deliverySummary.failed++;
-      }
-    }
-
-    // STEP 8: Push Notifications (if requested)
+    // STEP 6: Push Notifications (if requested)
     if (channels.includes('push')) {
       try {
         // Create queued delivery log for Push processing
@@ -506,7 +448,7 @@ export const sendToClassParents = async ({
   title,
   message,
   type,
-  channels = ['in_app', 'sms', 'email'],
+  channels = ['in_app', 'push', 'email'],
   createdBy = null
 }) => {
   // Get all students in the class

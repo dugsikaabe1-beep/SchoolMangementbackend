@@ -302,11 +302,6 @@ export const previewMessage = asyncHandler(async (req, res) => {
     };
   }
   
-  if (channels && (channels.includes('sms') || channels.includes('whatsapp'))) {
-    preview.sms = replaceVariables(body, variables);
-    preview.whatsapp = replaceVariables(body, variables);
-  }
-  
   if (channels && channels.includes('push')) {
     preview.push = {
       title: replaceVariables(title, variables),
@@ -442,25 +437,14 @@ export const getCommunicationUsage = asyncHandler(async (req, res) => {
   const usageRecords = await CommunicationUsage.find(dateFilter).sort({ date: 1 });
   
   // Calculate totals
-  const totals = {
-    sms: { sent: 0, delivered: 0, failed: 0, cost: 0 },
-    whatsapp: { sent: 0, delivered: 0, failed: 0, cost: 0 },
-    email: { sent: 0, delivered: 0, opened: 0, failed: 0, cost: 0 },
-    push: { sent: 0, delivered: 0, opened: 0, failed: 0, cost: 0 },
-    totalMessages: 0,
-    totalCost: 0
-  };
-  
-  for (const record of usageRecords) {
-    totals.sms.sent += record.sms.sent;
-    totals.sms.delivered += record.sms.delivered;
-    totals.sms.failed += record.sms.failed;
-    totals.sms.cost += record.sms.cost;
+    const totals = {
+      email: { sent: 0, delivered: 0, opened: 0, failed: 0, cost: 0 },
+      push: { sent: 0, delivered: 0, opened: 0, failed: 0, cost: 0 },
+      totalMessages: 0,
+      totalCost: 0
+    };
     
-    totals.whatsapp.sent += record.whatsapp.sent;
-    totals.whatsapp.delivered += record.whatsapp.delivered;
-    totals.whatsapp.failed += record.whatsapp.failed;
-    totals.whatsapp.cost += record.whatsapp.cost;
+    for (const record of usageRecords) {
     
     totals.email.sent += record.email.sent;
     totals.email.delivered += record.email.delivered;
@@ -736,30 +720,18 @@ export const getCommunicationHealth = asyncHandler(async (req, res) => {
   const school = await School.findById(schoolId).select('communicationSettings');
   
   const health = {
-    sms: {
-      provider: school?.communicationSettings?.sms?.provider || 'none',
-      isEnabled: school?.communicationSettings?.sms?.isEnabled || false,
-      status: 'unknown',
-      lastCheck: new Date()
-    },
-    whatsapp: {
-      provider: school?.communicationSettings?.whatsapp?.provider || 'none',
-      isEnabled: school?.communicationSettings?.whatsapp?.isEnabled || false,
-      status: 'unknown',
-      lastCheck: new Date()
-    },
-    email: {
-      provider: school?.communicationSettings?.email?.host ? 'smtp' : 'default',
-      isEnabled: school?.communicationSettings?.email?.isEnabled || false,
-      status: 'unknown',
-      lastCheck: new Date()
-    },
-    push: {
-      provider: school?.communicationSettings?.push?.provider || 'none',
-      isEnabled: school?.communicationSettings?.push?.isEnabled || false,
-      status: 'unknown',
-      lastCheck: new Date()
-    },
+      email: {
+        provider: school?.communicationSettings?.email?.host ? 'smtp' : 'default',
+        isEnabled: school?.communicationSettings?.email?.isEnabled || false,
+        status: 'unknown',
+        lastCheck: new Date()
+      },
+      push: {
+        provider: school?.communicationSettings?.push?.provider || 'none',
+        isEnabled: school?.communicationSettings?.push?.isEnabled || false,
+        status: 'unknown',
+        lastCheck: new Date()
+      },
     queue: {
       pending: 0,
       retrying: 0,

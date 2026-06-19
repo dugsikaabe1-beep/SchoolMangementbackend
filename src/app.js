@@ -156,8 +156,7 @@ import branchRoutes from './routes/branchRoutes.js';
 import academicRoutes from './routes/academicRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
-import notificationWebhookRoutes from './routes/notificationWebhookRoutes.js';
-import notificationTwilioWebhook from './routes/notificationTwilioWebhook.js';
+
 import notificationTemplateRoutes from './routes/notificationTemplateRoutes.js';
 import communicationSettingsRoutes from './routes/communicationSettingsRoutes.js';
 import communicationRoutes from './routes/communicationRoutes.js';
@@ -285,8 +284,7 @@ app.use('/api/v1/branches', branchRoutes);
 app.use('/api/v1/academic', academicRoutes);
 app.use('/api/v1/subscription', subscriptionRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/notifications/webhooks', notificationWebhookRoutes);
-app.use('/api/v1/notifications/webhooks', notificationTwilioWebhook);
+
 app.use('/api/v1/notifications/templates', notificationTemplateRoutes);
 app.use('/api/v1/admin/communication-settings', communicationSettingsRoutes);
 app.use('/api/v1/communication', communicationRoutes);

@@ -7,7 +7,6 @@ import NotificationTemplate from '../models/NotificationTemplate.js';
 import NotificationTemplateTranslation from '../models/NotificationTemplateTranslation.js';
 import { renderTemplate } from '../utils/templateUtils.js';
 import { resolveProvider } from '../services/providerResolver.js';
-import twilioProvider from '../services/providers/twilioProvider.js';
 import fcmProvider from '../services/providers/fcmProvider.js';
 
 const router = express.Router();
@@ -20,7 +19,7 @@ const getSchoolId = (req) => req.schoolId || req.user?.school?._id || req.user?.
 const getBranchId = (req) => req.branchId || req.user?.branch?._id || req.user?.branch || null;
 
 const normalizeChannels = (channels = []) => {
-  const allowed = ['in_app', 'email', 'sms', 'whatsapp', 'push'];
+  const allowed = ['in_app', 'email', 'push'];
   const normalized = channels.filter((channel) => allowed.includes(channel));
   return normalized.length ? [...new Set(normalized)] : ['in_app'];
 };
@@ -243,14 +242,6 @@ router.post('/', requireNotificationManager, async (req, res) => {
             subject: useTitle,
             html: `<p>${useMessage}</p>`,
           } : null,
-          smsData: selectedChannels.includes('sms') && recipient.phone ? {
-            to: recipient.phone,
-            body: useMessage,
-          } : null,
-          whatsappData: selectedChannels.includes('whatsapp') && recipient.phone ? {
-            to: recipient.phone,
-            body: useMessage,
-          } : null,
           pushData: selectedChannels.includes('push') ? {
             token: recipient.metadata?.pushToken || recipient.metadata?.expoPushToken,
             data: { title, message, actionLink },
@@ -274,7 +265,7 @@ router.post('/', requireNotificationManager, async (req, res) => {
 });
 
 /**
- * Admin test route to send an immediate test message via provider (SMS/WhatsApp/Push)
+ * Admin test route to send an immediate test message via provider (Push only)
  */
 router.post('/test', requireNotificationManager, async (req, res) => {
   try {
@@ -282,19 +273,7 @@ router.post('/test', requireNotificationManager, async (req, res) => {
     if (!channel || !to) return res.status(400).json({ success: false, message: 'channel and to are required' });
 
     const schoolId = getSchoolId(req);
-    const providerConfig = await resolveProvider({ tenantId: req.schoolId, schoolId, channel: channel === 'sms' ? 'sms' : channel });
-
-    if (channel === 'sms') {
-      if (!providerConfig) return res.status(400).json({ success: false, message: 'No SMS provider configured' });
-      const result = await twilioProvider.sendSMS({ to, body: message || title || 'Test SMS', config: providerConfig.config });
-      return res.json({ success: true, provider: providerConfig.providerKey, result });
-    }
-
-    if (channel === 'whatsapp') {
-      if (!providerConfig) return res.status(400).json({ success: false, message: 'No WhatsApp provider configured' });
-      const result = await twilioProvider.sendWhatsApp({ to, body: message || title || 'Test WhatsApp', config: providerConfig.config });
-      return res.json({ success: true, provider: providerConfig.providerKey, result });
-    }
+    const providerConfig = await resolveProvider({ tenantId: req.schoolId, schoolId, channel });
 
     if (channel === 'push') {
       // 'to' should be a device token

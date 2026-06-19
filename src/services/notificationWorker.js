@@ -11,7 +11,6 @@ import User from '../models/User.js';
  * Replace provider stubs with real provider adapter calls.
  */
 import { resolveProvider } from './providerResolver.js';
-import twilioProvider from './providers/twilioProvider.js';
 import fcmProvider from './providers/fcmProvider.js';
 
 export const processQueuedDeliveries = async (limit = 50) => {
@@ -36,16 +35,16 @@ export const processQueuedDeliveries = async (limit = 50) => {
     const tenantId = sample.tenantId || sample.school;
     const userId = sample.to?.userId;
 
-    // Fetch recipient contact details from User to find push token and phone
+    // Fetch recipient contact details from User to find push token
     let recipient = null;
     try {
-      if (userId) recipient = await User.findById(userId).select('metadata phone').lean();
+      if (userId) recipient = await User.findById(userId).select('metadata').lean();
     } catch (e) {
-      console.warn('[NotificationWorker] failed to fetch user for delivery fallback', userId, e.message || e);
+      console.warn('[NotificationWorker] failed to fetch user for delivery', userId, e.message || e);
     }
 
     // Priority order
-    const priority = ['push', 'whatsapp', 'sms'];
+    const priority = ['push'];
     let sent = false;
     let lastError = null;
     for (const channel of priority) {
@@ -58,7 +57,7 @@ export const processQueuedDeliveries = async (limit = 50) => {
         if (channel === 'push') {
           const token = recipient?.metadata?.pushToken || recipient?.metadata?.expoPushToken || sample.to?.pushToken || null;
           if (!token) {
-            continue; // try next channel
+            continue; // skip if no token
           }
 
           const providerConfig = await resolveProvider({ tenantId, schoolId: sample.school, channel: 'push' });
@@ -92,86 +91,6 @@ export const processQueuedDeliveries = async (limit = 50) => {
           await DeliveryLog.updateMany({ notificationId: sample.notificationId, 'to.userId': userId, status: 'queued', _id: { $ne: log._id } }, { $set: { status: 'cancelled', lastAttemptAt: new Date(), lastError: 'Delivered via higher priority channel' } });
 
           // Update notification summary
-          if (sample.notificationId) {
-            await Notification.findByIdAndUpdate(sample.notificationId, { $inc: { 'deliverySummary.total': 1, 'deliverySummary.sent': 1 } });
-          }
-
-          sent = true;
-          break;
-        }
-
-        if (channel === 'whatsapp') {
-          const phone = recipient?.phone || sample.to?.phone;
-          if (!phone) continue;
-          const providerConfig = await resolveProvider({ tenantId, schoolId: sample.school, channel: 'whatsapp' });
-          if (!providerConfig) continue;
-          const result = await twilioProvider.sendWhatsApp({ to: phone, body: notification ? `${notification.title}\n\n${notification.message}` : sample.to?.phone, config: providerConfig?.config });
-
-          if (!log) {
-            log = await DeliveryLog.create({
-              notificationId: sample.notificationId,
-              tenantId,
-              school: sample.school,
-              branch: sample.branch,
-              channel: 'whatsapp',
-              provider: providerConfig?.providerKey || 'twilio_whatsapp',
-              to: { userId, name: sample.to?.name, role: sample.to?.role, phone },
-              status: result?.status || 'sent',
-              providerMessageId: result?.providerMessageId || result?.response?.sid || null,
-              sentAt: new Date()
-            });
-          } else {
-            log.provider = providerConfig?.providerKey || log.provider || 'twilio_whatsapp';
-            log.providerMessageId = result?.providerMessageId || result?.response?.sid || null;
-            log.status = result?.status || 'sent';
-            log.attempt = (log.attempt || 0) + 1;
-            log.lastAttemptAt = new Date();
-            log.sentAt = new Date();
-            await log.save();
-          }
-
-          await DeliveryLog.updateMany({ notificationId: sample.notificationId, 'to.userId': userId, status: 'queued', _id: { $ne: log._id } }, { $set: { status: 'cancelled', lastAttemptAt: new Date(), lastError: 'Delivered via higher priority channel' } });
-
-          if (sample.notificationId) {
-            await Notification.findByIdAndUpdate(sample.notificationId, { $inc: { 'deliverySummary.total': 1, 'deliverySummary.sent': 1 } });
-          }
-
-          sent = true;
-          break;
-        }
-
-        if (channel === 'sms') {
-          const phone = recipient?.phone || sample.to?.phone;
-          if (!phone) continue;
-          const providerConfig = await resolveProvider({ tenantId, schoolId: sample.school, channel: 'sms' });
-          if (!providerConfig) continue;
-          const result = await twilioProvider.sendSMS({ to: phone, body: notification ? `${notification.title}\n\n${notification.message}` : sample.to?.phone, config: providerConfig?.config });
-
-          if (!log) {
-            log = await DeliveryLog.create({
-              notificationId: sample.notificationId,
-              tenantId,
-              school: sample.school,
-              branch: sample.branch,
-              channel: 'sms',
-              provider: providerConfig?.providerKey || 'twilio_sms',
-              to: { userId, name: sample.to?.name, role: sample.to?.role, phone },
-              status: result?.status || 'sent',
-              providerMessageId: result?.providerMessageId || result?.response?.sid || null,
-              sentAt: new Date()
-            });
-          } else {
-            log.provider = providerConfig?.providerKey || log.provider || 'twilio_sms';
-            log.providerMessageId = result?.providerMessageId || result?.response?.sid || null;
-            log.status = result?.status || 'sent';
-            log.attempt = (log.attempt || 0) + 1;
-            log.lastAttemptAt = new Date();
-            log.sentAt = new Date();
-            await log.save();
-          }
-
-          await DeliveryLog.updateMany({ notificationId: sample.notificationId, 'to.userId': userId, status: 'queued', _id: { $ne: log._id } }, { $set: { status: 'cancelled', lastAttemptAt: new Date(), lastError: 'Delivered via higher priority channel' } });
-
           if (sample.notificationId) {
             await Notification.findByIdAndUpdate(sample.notificationId, { $inc: { 'deliverySummary.total': 1, 'deliverySummary.sent': 1 } });
           }
