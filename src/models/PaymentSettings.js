@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { encryptConfig, decryptConfig } from '../utils/crypto.js';
 
 /**
  * Payment Settings Model
@@ -27,6 +28,11 @@ const paymentSettingsSchema = new mongoose.Schema(
 
     // Display name for the provider
     displayName: {
+      type: String,
+      trim: true
+    },
+    // Description for the provider
+    description: {
       type: String,
       trim: true
     },
@@ -117,6 +123,46 @@ const paymentSettingsSchema = new mongoose.Schema(
     toObject: { virtuals: true }
   }
 );
+
+// Middleware to encrypt secrets before saving
+paymentSettingsSchema.pre('save', function(next) {
+  const secretFields = ['apiKey', 'secretKey', 'clientId', 'clientSecret', 'webhookSecret'];
+  
+  secretFields.forEach(field => {
+    if (this.isModified(field) && this[field]) {
+      try {
+        // Encrypt the secret value
+        this[field] = encryptConfig({ secret: this[field] });
+      } catch (e) {
+        console.error(`Failed to encrypt ${field}:`, e.message);
+      }
+    }
+  });
+  
+  next();
+});
+
+// Virtual getters to decrypt secrets on access
+paymentSettingsSchema.methods.getDecryptedSecrets = function() {
+  const decrypted = {};
+  const secretFields = ['apiKey', 'secretKey', 'clientId', 'clientSecret', 'webhookSecret'];
+  
+  secretFields.forEach(field => {
+    if (this[field]) {
+      try {
+        const decryptedValue = decryptConfig(this[field]);
+        decrypted[field] = decryptedValue?.secret || null;
+      } catch (e) {
+        console.error(`Failed to decrypt ${field}:`, e.message);
+        decrypted[field] = null;
+      }
+    } else {
+      decrypted[field] = null;
+    }
+  });
+  
+  return decrypted;
+};
 
 // Indexes for efficient queries
 paymentSettingsSchema.index({ tenant: 1, provider: 1 }, { unique: true });

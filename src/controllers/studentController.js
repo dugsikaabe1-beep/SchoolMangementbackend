@@ -266,19 +266,17 @@ export const getMyMonthlyPayments = async (req, res) => {
 export const getStudentPaymentMethods = async (req, res) => {
   try {
     const { schoolId, branchId } = getScope(req);
-    const paymentSettings = await PaymentSettings.findOne({ school: schoolId });
+    const paymentSettingsList = await PaymentSettings.find({ tenant: schoolId, isActive: true });
     
-    if (!paymentSettings) {
+    if (!paymentSettingsList || paymentSettingsList.length === 0) {
       return res.json({ providers: [] });
     }
 
-    const enabledProviders = Object.entries(paymentSettings.providers)
-      .filter(([_, config]) => config.enabled)
-      .map(([providerId, config]) => ({
-        id: providerId,
-        name: config.name,
-        description: config.description
-      }));
+    const enabledProviders = paymentSettingsList.map(settings => ({
+      id: settings.provider,
+      name: settings.displayName || settings.provider,
+      description: settings.description || ''
+    }));
 
     res.json({ providers: enabledProviders });
   } catch (error) {
@@ -295,8 +293,12 @@ export const initiateStudentPayment = async (req, res) => {
     const { schoolId, branchId } = getScope(req);
     const { monthlyPaymentId, providerId, studentId } = req.body;
 
-    // Validate student ID
-    if (studentId && studentId !== req.user.customId) {
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches
+    if (studentId !== req.user.customId) {
       return res.status(403).json({ message: 'Student ID does not match your account.' });
     }
 
@@ -380,6 +382,15 @@ export const getStudentPaymentInstructions = async (req, res) => {
     const { amount, studentId } = req.body;
     const { schoolId, branchId } = getScope(req);
 
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches
+    if (studentId !== req.user.customId) {
+      return res.status(403).json({ message: 'Student ID does not match your account.' });
+    }
+
     const instructions = await PaymentService.getPaymentInstructions(
       providerId,
       schoolId,
@@ -403,6 +414,16 @@ export const payMonthlyFee = async (req, res) => {
 
   try {
     const { schoolId, branchId } = getScope(req);
+
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches
+    if (studentId !== req.user.customId) {
+      return res.status(403).json({ message: 'Student ID does not match your account.' });
+    }
+
     // Find the payment record and ensure it belongs to this student
     const mp = await MonthlyPayment.findOne({
       _id: id,
@@ -417,11 +438,6 @@ export const payMonthlyFee = async (req, res) => {
     // Security: ensure the payment belongs to the authenticated student
     if (mp.student.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'You can only pay your own fees.' });
-    }
-
-    // Optional: also cross-check the typed Student ID matches the authenticated user's customId
-    if (studentId && studentId !== req.user.customId) {
-      return res.status(403).json({ message: 'Student ID does not match your account.' });
     }
 
     if (mp.status === 'PAID') {

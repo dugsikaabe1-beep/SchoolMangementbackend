@@ -17,17 +17,28 @@ export class PaymentService {
    * Get payment settings for a school
    * @param {string} schoolId School ID
    * @param {string} provider Provider type (optional)
-   * @returns {Promise<Array|Object>} Payment settings
+   * @returns {Promise<Array|Object>} Payment settings with decrypted secrets
    */
   static async getPaymentSettings(schoolId, provider = null) {
     const query = { tenant: schoolId, isActive: true };
     
     if (provider) {
       query.provider = provider;
-      return await PaymentSettings.findOne(query).select('+apiKey +secretKey +clientId +clientSecret +webhookSecret');
+      const settings = await PaymentSettings.findOne(query).select('+apiKey +secretKey +clientId +clientSecret +webhookSecret');
+      if (settings) {
+        // Decrypt secrets
+        const decryptedSecrets = settings.getDecryptedSecrets();
+        return {
+          ...settings.toObject(),
+          ...decryptedSecrets
+        };
+      }
+      return null;
     }
     
-    return await PaymentSettings.find(query);
+    const settingsList = await PaymentSettings.find(query);
+    // We don't decrypt secrets when getting multiple providers for security
+    return settingsList;
   }
 
   /**
@@ -44,15 +55,27 @@ export class PaymentService {
     
     if (existingSettings) {
       Object.assign(existingSettings, settingsData, { updatedBy: userId });
-      return await existingSettings.save();
+      const savedSettings = await existingSettings.save();
+      // Decrypt secrets for returning
+      const decryptedSecrets = savedSettings.getDecryptedSecrets();
+      return {
+        ...savedSettings.toObject(),
+        ...decryptedSecrets
+      };
     } else {
-      return await PaymentSettings.create({
+      const newSettings = await PaymentSettings.create({
         ...settingsData,
         tenant: schoolId,
         provider,
         createdBy: userId,
         updatedBy: userId
       });
+      // Decrypt secrets for returning
+      const decryptedSecrets = newSettings.getDecryptedSecrets();
+      return {
+        ...newSettings.toObject(),
+        ...decryptedSecrets
+      };
     }
   }
 
