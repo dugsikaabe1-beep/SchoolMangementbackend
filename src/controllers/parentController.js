@@ -195,8 +195,9 @@ export const linkParentToStudents = async (req, res) => {
       });
     }
 
+    const schoolId = req.user.school?._id || req.user.school;
     const parent = await User.findOne(
-      activeOnly({ _id: parentId, role: 'parent', school: req.user.school })
+      activeOnly({ _id: parentId, role: 'parent', school: schoolId })
     );
     if (!parent) {
       return res.status(404).json({ success: false, message: 'Parent account not found' });
@@ -205,7 +206,7 @@ export const linkParentToStudents = async (req, res) => {
     const validStudents = await User.find({
       _id: { $in: studentIds },
       role: 'student',
-      school: req.user.school,
+      school: schoolId,
       deletedAt: { $exists: false },
     }).select('_id');
 

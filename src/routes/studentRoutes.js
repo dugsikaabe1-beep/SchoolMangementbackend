@@ -11,6 +11,12 @@ import {
   getMyMonthlyPayments,
   payMonthlyFee,
   getStudentSchedule,
+  // New payment system endpoints
+  getStudentPaymentMethods,
+  initiateStudentPayment,
+  verifyStudentPayment,
+  getStudentTransactionHistory,
+  getStudentPaymentInstructions,
 } from '../controllers/studentController.js';
 import { getProfile } from '../controllers/authController.js';
 import { getExamHalls, getExamHallById } from '../controllers/examHallController.js';
@@ -47,6 +53,13 @@ router.get('/my-payments', getMyMonthlyPayments);
 router.get('/payments', getMyMonthlyPayments); // Alias for requested /api/student/payments
 // Write operations - Block if subscription expired or school blocked
 router.put('/my-payments/:id/pay', checkSubscription, payMonthlyFee);
+
+// ── New Payment System Endpoints ─────────────────────────────────
+router.get('/payment-methods', getStudentPaymentMethods);
+router.post('/payments/initiate', checkSubscription, initiateStudentPayment);
+router.get('/payments/verify/:transactionId', verifyStudentPayment);
+router.get('/transactions', getStudentTransactionHistory);
+router.post('/payments/instructions/:providerId', getStudentPaymentInstructions);
 // ────────────────────────────────────────────────────────────────
 
 // Legacy routes (kept for backward compat)

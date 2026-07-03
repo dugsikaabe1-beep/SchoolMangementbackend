@@ -7,6 +7,7 @@ const classSchema = new mongoose.Schema(
     maxStudents: { type: Number, required: true, min: 1 },
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     classTeacher: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -17,8 +18,8 @@ const classSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Prevent duplicate class+section within the same school and branch
-classSchema.index({ school: 1, branch: 1, name: 1, section: 1 }, { unique: true });
+// Prevent duplicate class+section within the same school, branch, AND academic year!
+classSchema.index({ school: 1, branch: 1, academicYear: 1, name: 1, section: 1 }, { unique: true });
 
 const Class = mongoose.model('Class', classSchema);
 export default Class;

@@ -3,6 +3,29 @@ import AcademicYear from '../models/AcademicYear.js';
 import Class from '../models/Class.js';
 import PromotionHistory from '../models/PromotionHistory.js';
 import { logAction } from '../utils/auditLogger.js';
+
+// Helper function to get next grade name
+const getNextGrade = (gradeName) => {
+  // Match patterns like "Grade X", "Form X", "Class X", etc.
+  const match = gradeName.match(/(\D+)(\d+)/);
+  if (match) {
+    const prefix = match[1].trim();
+    const currentNumber = parseInt(match[2]);
+    if (currentNumber < 12) {
+      return `${prefix}${currentNumber + 1}`;
+    }
+  }
+  // Fallback: try to extract any number from the name
+  const numberMatch = gradeName.match(/(\d+)/);
+  if (numberMatch) {
+    const currentNumber = parseInt(numberMatch[1]);
+    if (currentNumber < 12) {
+      return gradeName.replace(numberMatch[1], currentNumber + 1);
+    }
+  }
+  return null; // Don't create Grade 13 or higher
+};
+
 /**
  * @desc    Get all academic years for a tenant/branch
  * @route   GET /api/academic/years
@@ -32,7 +55,7 @@ export const getAcademicYears = async (req, res) => {
 };
 
 /**
- * @desc    Create a new academic year
+ * @desc    Create a new academic year and auto-generate next class structure
  * @route   POST /api/academic/years
  * @access  Private (School Admin)
  */
@@ -65,9 +88,199 @@ export const createAcademicYear = async (req, res) => {
       createdBy: req.user._id
     });
 
+    // Auto-generate next class structure from previous academic year
+    const previousYear = await AcademicYear.findOne({
+      tenant: req.schoolId,
+      branch: req.branchId || null,
+      _id: { $ne: academicYear._id }
+    }).sort({ startDate: -1 });
+
+    let createdClasses = [];
+    if (previousYear) {
+      // Get all classes from previous year
+      const previousClasses = await Class.find({
+        school: req.schoolId,
+        branch: req.branchId || null,
+        academicYear: previousYear._id,
+        isDeleted: { $ne: true }
+      });
+
+      // Generate next classes
+      for (const cls of previousClasses) {
+        const nextGradeName = getNextGrade(cls.name);
+        if (nextGradeName) {
+          try {
+            const newClass = await Class.create({
+              name: nextGradeName,
+              section: cls.section,
+              maxStudents: cls.maxStudents,
+              school: req.schoolId,
+              branch: cls.branch,
+              academicYear: academicYear._id,
+              createdBy: req.user._id
+            });
+            createdClasses.push(newClass);
+          } catch (err) {
+            // Skip duplicate (already exists)
+            console.log('Class already exists:', nextGradeName, cls.section);
+          }
+        }
+      }
+    }
+
     res.status(201).json({
       success: true,
-      data: academicYear
+      data: academicYear,
+      createdClasses
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get promotion preview for a new academic year
+ * @route   GET /api/academic/promotion-preview
+ * @access  Private (School Admin)
+ */
+export const getPromotionPreview = async (req, res) => {
+  try {
+    const { toAcademicYearId } = req.query;
+    
+    // Get current/previous academic year
+    const fromAcademicYear = await AcademicYear.findOne({
+      tenant: req.schoolId,
+      branch: req.branchId || null,
+      status: { $in: ['active', 'previous'] }
+    }).sort({ startDate: -1 });
+    
+    let toAcademicYear;
+    if (toAcademicYearId) {
+      toAcademicYear = await AcademicYear.findById(toAcademicYearId);
+    } else {
+      toAcademicYear = await AcademicYear.findOne({
+        tenant: req.schoolId,
+        branch: req.branchId || null,
+        status: 'active'
+      });
+    }
+    
+    if (!fromAcademicYear || !toAcademicYear) {
+      return res.status(400).json({
+        success: false,
+        message: 'Need both previous and next academic years'
+      });
+    }
+    
+    // Get classes from both years
+    const fromClasses = await Class.find({
+      school: req.schoolId,
+      branch: req.branchId || null,
+      academicYear: fromAcademicYear._id,
+      isDeleted: { $ne: true }
+    });
+    
+    const toClasses = await Class.find({
+      school: req.schoolId,
+      branch: req.branchId || null,
+      academicYear: toAcademicYear._id,
+      isDeleted: { $ne: true }
+    });
+    
+    // Map classes by (name, section) for quick lookup
+    const toClassMap = new Map();
+    toClasses.forEach(cls => {
+      toClassMap.set(`${cls.name}__${cls.section}`, cls);
+    });
+    
+    // Get students in from classes
+    const students = await User.find({
+      school: req.schoolId,
+      branch: req.branchId || null,
+      role: 'student',
+      class: { $in: fromClasses.map(c => c._id) },
+      status: 'active',
+      isDeleted: { $ne: true }
+    }).populate('class', 'name section');
+    
+    // Generate promotion preview
+    const promotionPreview = [];
+    for (const student of students) {
+      const fromClass = student.class;
+      const nextGradeName = getNextGrade(fromClass.name);
+      
+      let toClass = null;
+      if (nextGradeName) {
+        toClass = toClassMap.get(`${nextGradeName}__${fromClass.section}`);
+      }
+      
+      promotionPreview.push({
+        student: {
+          _id: student._id,
+          name: student.name,
+          customId: student.customId
+        },
+        fromClass,
+        toClass,
+        isGraduating: !nextGradeName,
+        action: 'promote' // default action
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        fromAcademicYear,
+        toAcademicYear,
+        promotionPreview
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Hold students back (don't promote them)
+ * @route   POST /api/academic/hold-students
+ * @access  Private (School Admin)
+ */
+export const holdStudentsBack = async (req, res) => {
+  try {
+    const { studentIds, academicYearId, notes } = req.body;
+    
+    const result = await User.updateMany(
+      { 
+        _id: { $in: studentIds }, 
+        school: req.schoolId, 
+        branch: req.branchId, 
+        role: 'student' 
+      },
+      {
+        $set: {
+          updatedBy: req.user._id,
+          status: 'active'
+        }
+      }
+    );
+    
+    // Log the action
+    await logAction(req, {
+      action: 'STUDENTS_HELD_BACK',
+      module: 'ACADEMIC',
+      details: { count: result.modifiedCount, studentIds, academicYearId, notes }
+    });
+    
+    res.json({
+      success: true,
+      message: `Held ${result.modifiedCount} students back`,
+      data: { modifiedCount: result.modifiedCount }
     });
   } catch (error) {
     res.status(500).json({

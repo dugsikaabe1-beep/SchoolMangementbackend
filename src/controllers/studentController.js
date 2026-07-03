@@ -10,6 +10,9 @@ import PaymentMonth from '../models/PaymentMonth.js';
 import Schedule from '../models/Schedule.js';
 import School from '../models/School.js';
 import ExamSession from '../models/ExamSession.js';
+import PaymentService from '../services/PaymentService.js';
+import PaymentSettings from '../models/PaymentSettings.js';
+import Transaction from '../models/Transaction.js';
 
 const getScope = (req) => ({
   schoolId: req.user.school?._id || req.user.school,
@@ -257,6 +260,139 @@ export const getMyMonthlyPayments = async (req, res) => {
 };
 
 /**
+ * GET /student/payment-methods
+ * Get the school's enabled payment providers
+ */
+export const getStudentPaymentMethods = async (req, res) => {
+  try {
+    const { schoolId, branchId } = getScope(req);
+    const paymentSettings = await PaymentSettings.findOne({ school: schoolId });
+    
+    if (!paymentSettings) {
+      return res.json({ providers: [] });
+    }
+
+    const enabledProviders = Object.entries(paymentSettings.providers)
+      .filter(([_, config]) => config.enabled)
+      .map(([providerId, config]) => ({
+        id: providerId,
+        name: config.name,
+        description: config.description
+      }));
+
+    res.json({ providers: enabledProviders });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * POST /student/payments/initiate
+ * Initiate a payment using the selected provider
+ */
+export const initiateStudentPayment = async (req, res) => {
+  try {
+    const { schoolId, branchId } = getScope(req);
+    const { monthlyPaymentId, providerId, studentId } = req.body;
+
+    // Validate student ID
+    if (studentId && studentId !== req.user.customId) {
+      return res.status(403).json({ message: 'Student ID does not match your account.' });
+    }
+
+    // Get the monthly payment record
+    const monthlyPayment = await MonthlyPayment.findOne({
+      _id: monthlyPaymentId,
+      student: req.user._id,
+      school: schoolId,
+      branch: branchId
+    });
+
+    if (!monthlyPayment) {
+      return res.status(404).json({ message: 'Payment record not found.' });
+    }
+
+    if (monthlyPayment.status === 'PAID') {
+      return res.status(400).json({ message: 'This month is already paid.' });
+    }
+
+    // Initiate payment
+    const paymentResult = await PaymentService.initiatePayment({
+      schoolId,
+      branchId,
+      providerId,
+      amount: monthlyPayment.amount,
+      currency: 'USD', // TODO: Make this configurable
+      reference: `${req.user.customId}-${monthlyPayment.month}-${monthlyPayment.year}`,
+      studentId: req.user._id,
+      studentName: req.user.name,
+      monthlyPaymentId: monthlyPayment._id
+    });
+
+    res.json(paymentResult);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * GET /student/payments/verify/:transactionId
+ * Verify a payment
+ */
+export const verifyStudentPayment = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const { schoolId, branchId } = getScope(req);
+
+    const result = await PaymentService.verifyPayment(transactionId, schoolId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * GET /student/transactions
+ * Get the student's transaction history
+ */
+export const getStudentTransactionHistory = async (req, res) => {
+  try {
+    const { schoolId, branchId } = getScope(req);
+    const transactions = await Transaction.find({
+      studentId: req.user._id,
+      school: schoolId,
+      branch: branchId
+    }).sort({ createdAt: -1 });
+
+    res.json({ transactions });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * POST /student/payments/instructions/:providerId
+ * Get payment instructions for a provider
+ */
+export const getStudentPaymentInstructions = async (req, res) => {
+  try {
+    const { providerId } = req.params;
+    const { amount, studentId } = req.body;
+    const { schoolId, branchId } = getScope(req);
+
+    const instructions = await PaymentService.getPaymentInstructions(
+      providerId,
+      schoolId,
+      { amount, studentId }
+    );
+
+    res.json(instructions);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
  * PUT /student/my-payments/:id/pay
  * Student pays one specific month.
  * Security: validates the record belongs to the requesting student.
@@ -330,13 +466,14 @@ export const getFeesDue = async (req, res) => {
 export const payMonthlyFees = async (req, res) => {
   const { amount, paymentMethod, month } = req.body;
   try {
+    const schoolId = req.user.school?._id || req.user.school;
     const payment = await Payment.create({
       student: req.user._id,
       amount,
       paymentMethod,
       month,
       status: 'Paid',
-      school: req.user.school,
+      school: schoolId,
       transactionId: `TXN-${Date.now()}-${req.user._id.toString().slice(-4)}`,
     });
     res.status(201).json(payment);

@@ -65,7 +65,7 @@ const resolveBranchId = async (req) => {
   let branchId = req.branchId || req.user?.branch;
   
   if (!branchId) {
-    const schoolId = req.user.school;
+    const schoolId = req.user.school?._id || req.user.school;
     let branch = await Branch.findOne({ 
       tenant: schoolId, 
       status: 'active', 
@@ -105,7 +105,7 @@ const calculateGrade = (avg) => {
 // --- Certificate Generator ---
 export const generateCertificate = async (req, res) => {
   const { studentId, type, title, achievementName } = req.body;
-  const schoolId = req.user.school;
+  const schoolId = req.user.school?._id || req.user.school;
   try {
     const student = await User.findById(studentId).populate('school');
     if (!student) return res.status(404).json({ message: 'Student not found' });
@@ -146,7 +146,8 @@ export const generateCertificate = async (req, res) => {
 // --- Online Admission System ---
 export const getAdmissions = async (req, res) => {
   try {
-    const admissions = await Admission.find({ school: req.user.school }).populate('class');
+    const schoolId = req.user.school?._id || req.user.school;
+    const admissions = await Admission.find({ school: schoolId }).populate('class');
     res.json(admissions);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -3535,7 +3536,7 @@ export const removeClassSubjectAssignment = async (req, res) => {
 // --- Dashboard Statistics ---
 export const getDashboardStats = async (req, res) => {
   try {
-    const schoolId = req.user.school;
+    const schoolId = req.user.school?._id || req.user.school;
     const branchId = req.branchId; // From branchIsolation middleware
     const academicYearId = req.academicYearId; // From injectAcademicYear middleware
     

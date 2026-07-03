@@ -2,7 +2,6 @@ import app from './app.js';
 import mongoose from 'mongoose';
 import connectDB from './config/db.js';
 import dotenv from 'dotenv';
-import { ensureEmailProvidersInitialized } from './utils/emailService.js';
 import { runStartupDiagnostics } from './utils/diagnostics.js';
 import migrateLegacySubjectsToClassSubjects from './utils/migrateClassSubjects.js';
 import { initPaymentScheduler } from './services/paymentScheduler.js';
@@ -23,13 +22,6 @@ const startServer = async () => {
 
     // Initialize Redis connections (MUST come before diagnostics & worker import)
     await initRedis();
-
-    // Initialize email providers now that env is loaded
-    try {
-      ensureEmailProvidersInitialized();
-    } catch (err) {
-      console.warn('[Server] Email provider initialization warning:', err.message);
-    }
 
     // Run startup diagnostics (non-fatal)
     try {

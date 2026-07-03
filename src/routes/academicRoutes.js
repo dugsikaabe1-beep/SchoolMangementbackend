@@ -9,7 +9,10 @@ import {
   promoteClass,
   promoteGrade,
   graduateStudents,
-  transferStudent
+  transferStudent,
+  getPromotionPreview,
+  holdStudentsBack,
+  getPromotionHistory
 } from '../controllers/academicController.js';
 import { 
   protect, 
@@ -39,14 +42,17 @@ router.route('/years/:id')
 router.post('/years/:id/activate', checkPermission('settings.manage'), activateAcademicYear);
 router.post('/years/:id/archive', checkPermission('settings.manage'), archiveAcademicYear);
 
-// Student Lifecycle Management
+// Student Promotion Management
 router.use('/promote', checkModuleAccess('promotions'));
 router.use('/graduate', checkModuleAccess('promotions'));
 router.use('/transfer', checkModuleAccess('students'));
+router.get('/promotion-preview', checkPermission('students.view'), branchIsolation, getPromotionPreview);
 router.post('/promote', checkPermission('students.edit'), branchIsolation, promoteStudents);
 router.post('/promote/class', checkPermission('students.edit'), branchIsolation, promoteClass);
 router.post('/promote/grade', checkPermission('students.edit'), branchIsolation, promoteGrade);
+router.post('/hold-students', checkPermission('students.edit'), branchIsolation, holdStudentsBack);
 router.post('/graduate', checkPermission('students.edit'), branchIsolation, graduateStudents);
 router.post('/transfer', checkPermission('students.edit'), transferStudent); // May involve branch transfer
+router.get('/promotion-history', checkPermission('students.view'), branchIsolation, getPromotionHistory);
 
 export default router;
