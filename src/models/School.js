@@ -50,6 +50,22 @@ const schoolSchema = new mongoose.Schema(
         defaultStatus: { type: String, enum: ['active', 'inactive'], default: 'inactive' },
       },
       enabledModules: [{ type: String }], // List of module codes enabled for this school
+      // ID Card Configuration
+      idCard: {
+        studentFormat: { 
+          type: String, 
+          default: 'DKB-{YEAR}-{SEQUENCE}',
+          description: 'Student ID format: {SCHOOL_CODE}-{YEAR}-{SEQUENCE}, {SCHOOL_CODE}-{BRANCH_CODE}-{YEAR}-{SEQUENCE}, etc.'
+        },
+        teacherFormat: { 
+          type: String, 
+          default: 'EMP-{YEAR}-{SEQUENCE}',
+          description: 'Teacher/Employee ID format'
+        },
+        sequencePadding: { type: Number, default: 6, min: 3, max: 10 },
+        defaultValidityYears: { type: Number, default: 1, min: 1, max: 10 },
+        verificationBaseUrl: { type: String, trim: true },
+      }
     },
 
     // COMMUNICATION SETTINGS (per tenant)

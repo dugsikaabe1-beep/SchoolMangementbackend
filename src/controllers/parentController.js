@@ -4,6 +4,9 @@ import Mark from '../models/Mark.js';
 import MonthlyPayment from '../models/MonthlyPayment.js';
 import Schedule from '../models/Schedule.js';
 import Announcement from '../models/Announcement.js';
+import PaymentSettings from '../models/PaymentSettings.js';
+import Transaction from '../models/Transaction.js';
+import PaymentService from '../services/PaymentService.js';
 import { activeOnly } from '../utils/queryUtils.js';
 
 const ensureParentAccess = async (req, studentId) => {
@@ -224,6 +227,219 @@ export const linkParentToStudents = async (req, res) => {
   }
 };
 
+/**
+ * GET /parent/children/:studentId/payment-methods
+ * Get payment methods for a child's school
+ */
+export const getParentPaymentMethods = async (req, res) => {
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const paymentSettingsList = await PaymentSettings.find({ tenant: student.school, isActive: true });
+    
+    if (!paymentSettingsList || paymentSettingsList.length === 0) {
+      return res.json({ providers: [] });
+    }
+
+    const enabledProviders = paymentSettingsList.map(settings => ({
+      id: settings.provider,
+      name: settings.displayName || settings.provider,
+      description: settings.description || ''
+    }));
+
+    res.json({ providers: enabledProviders });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * POST /parent/children/:studentId/payments/initiate
+ * Initiate payment for a child
+ */
+export const initiateParentPayment = async (req, res) => {
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const { monthlyPaymentId, providerId, studentId } = req.body;
+
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches the child
+    if (studentId !== student.customId) {
+      return res.status(403).json({ message: 'Student ID does not match the selected child.' });
+    }
+
+    const schoolId = student.school;
+    const branchId = student.branch;
+
+    // Get the monthly payment record
+    const monthlyPayment = await MonthlyPayment.findOne({
+      _id: monthlyPaymentId,
+      student: student._id,
+      school: schoolId,
+      branch: branchId
+    });
+
+    if (!monthlyPayment) {
+      return res.status(404).json({ message: 'Payment record not found.' });
+    }
+
+    if (monthlyPayment.status === 'PAID') {
+      return res.status(400).json({ message: 'This month is already paid.' });
+    }
+
+    // Initiate payment
+    const paymentResult = await PaymentService.initiatePayment({
+      schoolId,
+      branchId,
+      providerId,
+      amount: monthlyPayment.amount,
+      currency: 'USD',
+      reference: `${student.customId}-${monthlyPayment.month}-${monthlyPayment.year}`,
+      studentId: student._id,
+      studentName: student.name,
+      monthlyPaymentId: monthlyPayment._id
+    });
+
+    res.json(paymentResult);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * GET /parent/children/:studentId/payments/verify/:transactionId
+ * Verify payment
+ */
+export const verifyParentPayment = async (req, res) => {
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const { transactionId } = req.params;
+    const schoolId = student.school;
+
+    const result = await PaymentService.verifyPayment(transactionId, schoolId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * GET /parent/children/:studentId/transactions
+ * Get child's transaction history
+ */
+export const getParentTransactionHistory = async (req, res) => {
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const schoolId = student.school;
+    const branchId = student.branch;
+
+    const transactions = await Transaction.find({
+      studentId: student._id,
+      school: schoolId,
+      branch: branchId
+    }).sort({ createdAt: -1 });
+
+    res.json({ transactions });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * POST /parent/children/:studentId/payments/instructions/:providerId
+ * Get payment instructions
+ */
+export const getParentPaymentInstructions = async (req, res) => {
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const { providerId } = req.params;
+    const { amount, studentId } = req.body;
+    const schoolId = student.school;
+
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches the child
+    if (studentId !== student.customId) {
+      return res.status(403).json({ message: 'Student ID does not match the selected child.' });
+    }
+
+    const instructions = await PaymentService.getPaymentInstructions(
+      providerId,
+      schoolId,
+      { amount, studentId }
+    );
+
+    res.json(instructions);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * PUT /parent/children/:studentId/my-payments/:id/pay
+ * Mark payment as paid for a child
+ */
+export const payChildMonthlyFee = async (req, res) => {
+  const { id } = req.params;
+  const { studentId } = req.body;
+
+  try {
+    const { error, student } = await ensureParentAccess(req, req.params.studentId);
+    if (error) return res.status(error.status).json({ success: false, message: error.message });
+
+    const schoolId = student.school;
+    const branchId = student.branch;
+
+    // Validate student ID is mandatory
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student ID is required.' });
+    }
+    // Validate student ID matches the child
+    if (studentId !== student.customId) {
+      return res.status(403).json({ message: 'Student ID does not match the selected child.' });
+    }
+
+    // Find the payment record and ensure it belongs to this student
+    const mp = await MonthlyPayment.findOne({
+      _id: id,
+      student: student._id,
+      school: schoolId,
+      branch: branchId
+    });
+
+    if (!mp) {
+      return res.status(404).json({ message: 'Payment record not found.' });
+    }
+
+    if (mp.status === 'PAID') {
+      return res.status(400).json({ message: 'This month is already paid.' });
+    }
+
+    // Mark as paid
+    mp.status = 'PAID';
+    mp.paymentDate = new Date();
+    await mp.save();
+
+    res.json({ message: 'Payment marked as paid successfully', success: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export default {
   getParentChildren,
   getChildProfile,
@@ -233,4 +449,10 @@ export default {
   getChildTimetable,
   getParentAnnouncements,
   linkParentToStudents,
+  getParentPaymentMethods,
+  initiateParentPayment,
+  verifyParentPayment,
+  getParentTransactionHistory,
+  getParentPaymentInstructions,
+  payChildMonthlyFee,
 };

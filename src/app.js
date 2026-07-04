@@ -167,6 +167,7 @@ import searchRoutes from './routes/searchRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import schoolFeatureRoutes from './routes/schoolFeatureRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import idCardRoutes from './routes/idCardRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -319,6 +320,7 @@ app.use('/api/v1/search', searchRoutes);
 app.use('/api/v1/onboarding', onboardingRoutes);
 app.use('/api/v1/school-features', schoolFeatureRoutes);
 app.use('/api/v1/payments', paymentRoutes);
+app.use('/api/v1/id-cards', idCardRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);
@@ -344,6 +346,7 @@ app.use('/api/enterprise', enterpriseRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/id-cards', idCardRoutes);
 
 // Mobile dev compatibility: some Expo builds use an API_URL without /api.
 app.use('/mobile', mobileRoutes);

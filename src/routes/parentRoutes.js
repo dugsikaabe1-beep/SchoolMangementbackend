@@ -7,7 +7,13 @@ import {
   getChildFees,
   getChildTimetable,
   getParentAnnouncements,
-  linkParentToStudents
+  linkParentToStudents,
+  getParentPaymentMethods,
+  initiateParentPayment,
+  verifyParentPayment,
+  getParentTransactionHistory,
+  getParentPaymentInstructions,
+  payChildMonthlyFee
 } from '../controllers/parentController.js';
 import { protect, allowParent, allowAdmin } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
@@ -31,6 +37,13 @@ parentRouter.get('/children/:studentId/results', getChildResults);
 parentRouter.get('/children/:studentId/fees', getChildFees);
 parentRouter.get('/children/:studentId/timetable', getChildTimetable);
 parentRouter.get('/announcements', getParentAnnouncements);
+// Payment endpoints
+parentRouter.get('/children/:studentId/payment-methods', getParentPaymentMethods);
+parentRouter.post('/children/:studentId/payments/initiate', initiateParentPayment);
+parentRouter.get('/children/:studentId/payments/verify/:transactionId', verifyParentPayment);
+parentRouter.get('/children/:studentId/transactions', getParentTransactionHistory);
+parentRouter.post('/children/:studentId/payments/instructions/:providerId', getParentPaymentInstructions);
+parentRouter.put('/children/:studentId/my-payments/:id/pay', payChildMonthlyFee);
 
 // Use the parent router for all routes except /link
 router.use('/', parentRouter);
