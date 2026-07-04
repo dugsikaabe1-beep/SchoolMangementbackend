@@ -17,8 +17,8 @@ import {
 export const generateIDCard = async (req, res) => {
   try {
     const { userId, type, expiryDate, designId, notes, rollNumber, admissionNumber, employeeId } = req.body;
-    const schoolId = req.school?._id || req.schoolId;
-    const branchId = req.branch?._id || req.branchId;
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = req.user.branch;
 
     // Find user
     const user = await User.findById(userId);
@@ -146,7 +146,7 @@ export const generateIDCard = async (req, res) => {
 // Get all ID cards for a school
 export const getIDCards = async (req, res) => {
   try {
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     const { status, type, branchId, search } = req.query;
 
     const filter = { school: schoolId };
@@ -192,7 +192,7 @@ export const getIDCards = async (req, res) => {
 export const getIDCardById = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
 
     const idCard = await IDCard.findOne({ _id: id, school: schoolId }).populate(
       'user school branch design'
@@ -291,7 +291,7 @@ export const updateIDCardStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
 
     const idCard = await IDCard.findOne({ _id: id, school: schoolId });
     if (!idCard) {
@@ -338,7 +338,7 @@ export const updateIDCardStatus = async (req, res) => {
 export const markAsPrinted = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
 
     const idCard = await IDCard.findOne({ _id: id, school: schoolId });
     if (!idCard) {
@@ -380,7 +380,7 @@ export const markAsPrinted = async (req, res) => {
 export const deleteIDCard = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
 
     const idCard = await IDCard.findOne({ _id: id, school: schoolId });
     if (!idCard) {
@@ -418,7 +418,7 @@ export const deleteIDCard = async (req, res) => {
 // ID Card Design CRUD
 export const createIDCardDesign = async (req, res) => {
   try {
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     const designData = { ...req.body, school: schoolId };
 
     const design = new IDCardDesign(designData);
@@ -448,7 +448,7 @@ export const createIDCardDesign = async (req, res) => {
 
 export const getIDCardDesigns = async (req, res) => {
   try {
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     const { type } = req.query;
     
     const filter = { school: schoolId, isActive: true };
@@ -477,7 +477,7 @@ export const getIDCardDesigns = async (req, res) => {
 export const updateIDCardDesign = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     
     const design = await IDCardDesign.findOne({ _id: id, school: schoolId });
     if (!design) {
@@ -524,7 +524,7 @@ export const updateIDCardDesign = async (req, res) => {
 export const deleteIDCardDesign = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     
     const design = await IDCardDesign.findOne({ _id: id, school: schoolId });
     if (!design) {
@@ -561,7 +561,7 @@ export const deleteIDCardDesign = async (req, res) => {
 export const getIDCardPreview = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     
     const idCard = await IDCard.findOne({ _id: id, school: schoolId })
       .populate('user school branch design');
@@ -610,7 +610,7 @@ export const getIDCardPreview = async (req, res) => {
 export const reprintIDCard = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
     
     const originalCard = await IDCard.findOne({ _id: id, school: schoolId });
     if (!originalCard) {
@@ -685,7 +685,7 @@ export const reprintIDCard = async (req, res) => {
 export const getIDCardsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const schoolId = req.school?._id || req.schoolId;
+    const schoolId = req.user.school?._id || req.user.school;
 
     const idCards = await IDCard.find({
       school: schoolId,

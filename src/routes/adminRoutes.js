@@ -23,6 +23,7 @@ import {
   transferStudent,
   createTeacher,
   getTeachers,
+  getUsersForIDCard,
   updateTeacher,
   deleteTeacher,
   restoreTeacher,
@@ -234,6 +235,9 @@ router.post('/teachers/:id/restore', checkPermission('teachers.edit'), restoreTe
 
 router.get('/teacher-profile/:customId', checkPermission('teachers.view'), getTeacherProfile);
 router.get('/teachers/check-id', checkPermission('teachers.view'), checkTeacherId);
+
+// --- ID Card Users ---
+router.get('/users-for-id-card', checkPermission('students.view'), getUsersForIDCard);
 
 // --- 4. Class Management ---
 router.use('/classes', checkModuleAccess('classes'));

@@ -2140,6 +2140,36 @@ export const getTeachers = async (req, res) => {
   }
 };
 
+export const getUsersForIDCard = async (req, res) => {
+  try {
+    const schoolId = req.user.school?._id || req.user.school;
+    const branchId = await resolveBranchId(req);
+
+    // Get students, teachers, and staff (admin, accountant, branchmanager)
+    const query = { 
+      role: { $in: ['student', 'teacher', 'admin', 'accountant', 'branchmanager'] },
+      school: schoolId,
+      isDeleted: false
+    };
+    if (branchId) query.branch = branchId;
+
+    console.log(`[DEBUG] getUsersForIDCard: tenantId=${schoolId}, branchId=${branchId}`);
+
+    const users = await User.find(query)
+      .populate('class', 'name section')
+      .populate('branch', 'name')
+      .populate('subjects', 'name code');
+    
+    console.log(`[DEBUG] getUsersForIDCard: Found ${users.length} users`);
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ 
+      message: error.message,
+      userMessage: 'Something went wrong. Please try again.'
+    });
+  }
+};
+
 export const updateTeacher = async (req, res) => {
   const { id } = req.params;
   const { 
