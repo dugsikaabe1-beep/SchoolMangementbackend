@@ -16,29 +16,35 @@ import {
 // Generate ID Card
 export const generateIDCard = async (req, res) => {
   try {
+    console.log('=== Starting generateIDCard ===');
     const { userId, type, expiryDate, designId, notes, rollNumber, admissionNumber, employeeId } = req.body;
+    console.log('Req body:', { userId, type });
     const schoolId = req.user.school?._id || req.user.school;
+    console.log('schoolId:', schoolId);
     const branchId = req.user.branch;
+    console.log('branchId:', branchId);
 
-    // Find user
+    console.log('Step 1: Find user...');
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
+    console.log('User found:', user.name);
 
-    // Find school
+    console.log('Step 2: Find school...');
     const school = await School.findById(schoolId);
     if (!school) {
       return res.status(404).json({ success: false, message: 'School not found' });
     }
+    console.log('School found:', school.name);
 
-    // Find branch if needed
+    console.log('Step 3: Find branch if needed...');
     let branch = null;
     if (branchId) {
       branch = await Branch.findById(branchId);
     }
 
-    // Check if user already has an active ID card of this type
+    console.log('Step 4: Check for existing active card...');
     const existingCard = await IDCard.findOne({
       school: schoolId,
       user: userId,
@@ -52,19 +58,17 @@ export const generateIDCard = async (req, res) => {
       });
     }
 
-    // Get design if provided, or use default
+    console.log('Step 5: Get design...');
     let design = null;
     if (designId) {
       design = await IDCardDesign.findById(designId);
     } else {
-      // Find default design for this type
       design = await IDCardDesign.findOne({
         school: schoolId,
         type,
         isDefault: true,
         isActive: true
       });
-      // If no default, use first active
       if (!design) {
         design = await IDCardDesign.findOne({
           school: schoolId,
@@ -73,11 +77,19 @@ export const generateIDCard = async (req, res) => {
         });
       }
     }
+    console.log('Design found:', design?._id);
 
-    // Generate custom card number
-    const cardNumber = await generateCardNumber(school, type, branch);
+    console.log('Step 6: Generate card number...');
+    let cardNumber;
+    try {
+      cardNumber = await generateCardNumber(school, type, branch);
+      console.log('Generated card number:', cardNumber);
+    } catch (err) {
+      console.error('generateCardNumber error:', err);
+      throw err;
+    }
     
-    // Calculate expiry date if not provided
+    console.log('Step 7: Calculate expiry...');
     let finalExpiryDate = expiryDate;
     if (!finalExpiryDate) {
       const validityYears = school.settings?.idCard?.defaultValidityYears || 1;
@@ -85,7 +97,7 @@ export const generateIDCard = async (req, res) => {
       finalExpiryDate.setFullYear(finalExpiryDate.getFullYear() + validityYears);
     }
 
-    // Create ID card
+    console.log('Step 8: Create ID card model...');
     const idCard = new IDCard({
       school: schoolId,
       branch: branchId || user.branch,
@@ -101,40 +113,52 @@ export const generateIDCard = async (req, res) => {
       design: design?._id,
       notes,
       createdBy: req.user?._id,
-      // Create snapshots
       userSnapshot: createUserSnapshot(user),
       schoolSnapshot: createSchoolSnapshot(school)
     });
+    console.log('ID card model created');
 
-    // Generate QR data
+    console.log('Step 9: Generate QR data...');
     idCard.generateQrData(school);
+    console.log('QR data generated');
     
-    // Set verification URL if configured
+    console.log('Step 10: Set verification URL...');
     if (school.settings?.idCard?.verificationBaseUrl) {
       idCard.verificationUrl = `${school.settings.idCard.verificationBaseUrl}/verify/${idCard.verificationToken}`;
     }
 
+    console.log('Step 11: Saving ID card...');
     await idCard.save();
+    console.log('ID card saved');
 
-    // Populate for response
-    await idCard.populate('user school branch design');
+    console.log('Step 12: Populating response...');
+    await idCard.populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }]);
+    console.log('Response populated');
 
-    // Log action
-    await logAction(req, {
-      action: 'ID_CARD_GENERATED',
-      module: 'IDCards',
-      details: { userId, type, cardNumber },
-      targetId: idCard._id,
-      newValue: { cardNumber, type, userId },
-    });
+    console.log('Step 13: Logging action...');
+    try {
+      await logAction(req, {
+        action: 'ID_CARD_GENERATED',
+        module: 'IDCards',
+        details: { userId, type, cardNumber },
+        targetId: idCard._id,
+        newValue: { cardNumber, type, userId },
+      });
+      console.log('Action logged');
+    } catch (logErr) {
+      console.error('Error logging action:', logErr);
+    }
 
+    console.log('=== generateIDCard completed ===');
     res.status(201).json({
       success: true,
       message: 'ID card generated successfully',
       data: idCard,
     });
   } catch (error) {
-    console.error('Error generating ID card:', error);
+    console.error('=== ERROR generating ID card ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to generate ID card',
@@ -171,7 +195,7 @@ export const getIDCards = async (req, res) => {
     }
 
     const idCards = await IDCard.find(filter)
-      .populate('user school branch design')
+      .populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }])
       .sort({ createdAt: -1 });
 
     res.json({
@@ -194,9 +218,12 @@ export const getIDCardById = async (req, res) => {
     const { id } = req.params;
     const schoolId = req.user.school?._id || req.user.school;
 
-    const idCard = await IDCard.findOne({ _id: id, school: schoolId }).populate(
-      'user school branch design'
-    );
+    const idCard = await IDCard.findOne({ _id: id, school: schoolId }).populate([
+      { path: 'user', populate: { path: 'class' } },
+      { path: 'school' },
+      { path: 'branch' },
+      { path: 'design' }
+    ]);
 
     if (!idCard) {
       return res.status(404).json({
@@ -224,9 +251,11 @@ export const verifyIDCard = async (req, res) => {
   try {
     const { token } = req.params;
 
-    const idCard = await IDCard.findOne({ verificationToken: token }).populate(
-      'user school branch'
-    );
+    const idCard = await IDCard.findOne({ verificationToken: token }).populate([
+      { path: 'user', populate: { path: 'class' } },
+      { path: 'school' },
+      { path: 'branch' }
+    ]);
 
     if (!idCard) {
       return res.status(404).json({
@@ -271,6 +300,7 @@ export const verifyIDCard = async (req, res) => {
               profileImage: idCard.user.profileImage,
               role: idCard.user.role,
               class: idCard.user.class,
+              motherName: idCard.user.motherName,
             }
           : null,
       },
@@ -317,7 +347,7 @@ export const updateIDCardStatus = async (req, res) => {
       newValue: { status, notes },
     });
 
-    await idCard.populate('user school branch design');
+    await idCard.populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }]);
 
     res.json({
       success: true,
@@ -359,7 +389,7 @@ export const markAsPrinted = async (req, res) => {
       targetId: idCard._id,
     });
 
-    await idCard.populate('user school branch design');
+    await idCard.populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }]);
 
     res.json({
       success: true,
@@ -564,7 +594,7 @@ export const getIDCardPreview = async (req, res) => {
     const schoolId = req.user.school?._id || req.user.school;
     
     const idCard = await IDCard.findOne({ _id: id, school: schoolId })
-      .populate('user school branch design');
+      .populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }]);
     
     if (!idCard) {
       return res.status(404).json({
@@ -657,7 +687,7 @@ export const reprintIDCard = async (req, res) => {
     }
 
     await newCard.save();
-    await newCard.populate('user school branch design');
+    await newCard.populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }]);
 
     await logAction(req, {
       action: 'ID_CARD_REPRINTED',
@@ -691,7 +721,7 @@ export const getIDCardsByUser = async (req, res) => {
       school: schoolId,
       user: userId
     })
-      .populate('user school branch design')
+      .populate([{ path: 'user', populate: { path: 'class' } }, { path: 'school' }, { path: 'branch' }, { path: 'design' }])
       .sort({ createdAt: -1 });
 
     res.json({

@@ -74,7 +74,7 @@ const idCardSchema = new mongoose.Schema(
 );
 
 // Pre-save hook to generate cardNumber and verificationToken if not provided
-idCardSchema.pre('save', function (next) {
+idCardSchema.pre('save', async function() {
   if (!this.cardNumber) {
     // Format: SCHOOL-YEAR-XXXXXX (customizable via school settings)
     const year = new Date().getFullYear();
@@ -98,8 +98,6 @@ idCardSchema.pre('save', function (next) {
   if (this.expiryDate && now > this.expiryDate && this.status === 'active') {
     this.status = 'expired';
   }
-
-  next();
 });
 
 // Generate QR data
@@ -116,7 +114,11 @@ idCardSchema.methods.generateQrData = function(school) {
     issueDate: this.issueDate.toISOString(),
     expiryDate: this.expiryDate ? this.expiryDate.toISOString() : null,
     generatedAt: new Date().toISOString(),
-    verificationUrl: this.verificationUrl || (school?.settings?.idCard?.verificationBaseUrl ? `${school.settings.idCard.verificationBaseUrl}/verify/${this.verificationToken}` : null)
+    verificationUrl: this.verificationUrl || (school?.settings?.idCard?.verificationBaseUrl ? `${school.settings.idCard.verificationBaseUrl}/verify/${this.verificationToken}` : null),
+    name: this.userSnapshot?.name,
+    motherName: this.userSnapshot?.motherName,
+    grade: this.userSnapshot?.class?.name || this.userSnapshot?.class,
+    image: this.userSnapshot?.photo?.url || this.userSnapshot?.photo
   };
   
   this.qrCodeData = qrData;

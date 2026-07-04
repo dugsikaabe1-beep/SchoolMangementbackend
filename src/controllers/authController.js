@@ -856,9 +856,13 @@ export const login = async (req, res) => {
         });
       }
 
-      // If it's a super admin, they don't necessarily need a school context
+      // If it's a super admin, they don't need a school context — handle fully here
       if (user.role === 'superadmin' || user.role === 'super_admin' || user.isSuperAdmin) {
         if (await user.matchPassword(password)) {
+          user.loginAttempts = 0;
+          user.lastLogin = Date.now();
+          await user.save();
+          logAction(req, { action: 'LOGIN_SUCCESS', module: 'AUTH', targetId: user._id });
           return res.json({
             _id: user._id,
             name: user.name,
@@ -867,20 +871,24 @@ export const login = async (req, res) => {
             isSuperAdmin: true,
             token: await issueTokens(res, user),
           });
+        } else {
+          // Wrong password — return 401, never fall through to school checks
+          return res.status(401).json({
+            message: 'Invalid credentials',
+            userMessage: 'Invalid email or password.',
+          });
         }
       }
 
-      // If it's a school user, they MUST have a school associated
-      const isNewAdmin = ['schooladmin', 'school_admin', 'admin'].includes(user.role) && !user.school;
-      
-      if (!user.school && !isNewAdmin) {
-        return res.status(403).json({
-          message: 'No school associated',
-          userMessage: 'Your account is not associated with any school. Please contact support.',
-        });
+      // --- SUPER ADMIN: bypass all school checks ---
+      if (user && (user.role === 'superadmin' || user.role === 'super_admin' || user.isSuperAdmin)) {
+        // Password is verified later in the shared block below
+        activeSchoolId = null; // Super admin has no school scope
+      } else {
+        // If it's a school user, they MUST have a school associated, but we are giving them freedom as requested
+        activeSchoolId = user.school ? user.school._id : null;
       }
 
-      activeSchoolId = user.school ? user.school._id : null;
     } else {
       user = await findUserSafely(buildQuery(activeSchoolId), ['school']);
     }

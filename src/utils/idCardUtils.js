@@ -83,7 +83,11 @@ export const generateQrDataString = (idCard, school) => {
     verificationUrl: idCard.verificationUrl || 
       (school?.settings?.idCard?.verificationBaseUrl 
         ? `${school.settings.idCard.verificationBaseUrl}/verify/${idCard.verificationToken}`
-        : null)
+        : null),
+    name: idCard.userSnapshot?.name || idCard.user?.name,
+    motherName: idCard.userSnapshot?.motherName || idCard.user?.motherName,
+    grade: idCard.userSnapshot?.class?.name || idCard.userSnapshot?.class || idCard.user?.class?.name || idCard.user?.class,
+    image: idCard.userSnapshot?.photo?.url || idCard.userSnapshot?.photo || idCard.user?.profileImage?.url || idCard.user?.profileImage
   };
   
   return JSON.stringify(qrData);
@@ -106,7 +110,8 @@ export const createUserSnapshot = (user) => {
     address: user.address,
     bloodGroup: user.bloodGroup,
     emergencyContact: user.emergencyContact,
-    dateOfBirth: user.dateOfBirth
+    dateOfBirth: user.dateOfBirth,
+    motherName: user.motherName
   };
 };
 
@@ -130,8 +135,6 @@ export const createSchoolSnapshot = (school) => {
  * Generate HTML for ID card preview (CR80 size: 85.60mm × 53.98mm = 320px × 200px at 96dpi)
  */
 export const generateIDCardHTML = (idCard, design, school) => {
-  const width = design.layout === 'portrait' ? '320px' : '510px';
-  const height = design.layout === 'portrait' ? '510px' : '320px';
   const user = idCard.userSnapshot || {};
   const schoolData = idCard.schoolSnapshot || school || {};
   
@@ -146,6 +149,7 @@ export const generateIDCardHTML = (idCard, design, school) => {
           font-family: 'Arial', sans-serif; 
           background: #f0f0f0;
           display: flex;
+          flex-direction: column;
           justify-content: center;
           align-items: center;
           min-height: 100vh;
@@ -153,143 +157,162 @@ export const generateIDCardHTML = (idCard, design, school) => {
         }
         .card-container {
           display: flex;
-          flex-direction: ${design.layout === 'portrait' ? 'column' : 'row'};
-          gap: 20px;
+          flex-direction: column;
+          gap: 40px;
         }
         .card {
-          width: ${width};
-          height: ${height};
-          background: ${design.backgroundColor};
-          border-radius: 12px;
+          width: 510px; /* CR80 landscape width */
+          height: 320px; /* CR80 landscape height */
+          background: white;
+          border-radius: 15px;
           box-shadow: 0 4px 20px rgba(0,0,0,0.15);
           overflow: hidden;
           position: relative;
+          border: 2px solid #1e40af;
         }
-        .card-front, .card-back {
-          width: 100%;
-          height: 100%;
-          padding: 16px;
-          position: relative;
+        /* Front Side Styles */
+        .front-header {
+          background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%);
+          padding: 10px 15px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
         }
-        .card-header {
-          background: linear-gradient(135deg, ${design.primaryColor}, ${design.secondaryColor});
+        .front-header-content {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .front-school-name {
           color: white;
-          padding: 12px;
-          text-align: center;
-          border-radius: 8px;
-          margin-bottom: 12px;
-        }
-        .school-logo {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          object-fit: cover;
-          margin: 0 auto 8px;
-          display: ${design.showSchoolLogo ? 'block' : 'none'};
-        }
-        .school-name {
-          font-size: 16px;
-          font-weight: bold;
-          margin-bottom: 4px;
-        }
-        .card-title {
           font-size: 14px;
-          opacity: 0.9;
+          font-weight: bold;
         }
-        .photo-container {
-          text-align: center;
-          margin: 12px 0;
+        .front-header-arabic {
+          color: white;
+          font-size: 14px;
+          font-weight: bold;
+        }
+        .front-body {
+          padding: 10px 15px;
+          display: flex;
+          gap: 15px;
+        }
+        .photo-section {
+          flex-shrink: 0;
         }
         .student-photo {
-          width: 100px;
-          height: 120px;
-          object-fit: cover;
-          border: 3px solid ${design.primaryColor};
-          border-radius: 8px;
-        }
-        .student-name {
-          font-size: 18px;
-          font-weight: bold;
-          text-align: center;
-          color: ${design.textColor};
-          margin: 8px 0 4px;
-        }
-        .card-number {
-          text-align: center;
-          font-size: 14px;
-          color: ${design.textColor};
-          opacity: 0.8;
-          font-family: monospace;
-        }
-        .details-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-          margin-top: 12px;
-          font-size: 12px;
-        }
-        .detail-item {
-          color: ${design.textColor};
-        }
-        .detail-label {
-          font-size: 10px;
-          opacity: 0.7;
-          text-transform: uppercase;
-          margin-bottom: 2px;
-        }
-        .detail-value {
-          font-weight: 600;
-        }
-        .qr-section {
-          position: absolute;
-          ${design.qrPosition === 'top-left' ? 'top: 16px; left: 16px;' : ''}
-          ${design.qrPosition === 'top-right' ? 'top: 16px; right: 16px;' : ''}
-          ${design.qrPosition === 'bottom-left' ? 'bottom: 16px; left: 16px;' : ''}
-          ${design.qrPosition === 'bottom-right' ? 'bottom: 16px; right: 16px;' : ''}
-          display: ${design.showQrCode ? 'block' : 'none'};
-        }
-        .qr-code {
-          width: ${design.qrSize}px;
-          height: ${design.qrSize}px;
-          background: white;
-          padding: 4px;
-          border-radius: 4px;
-        }
-        .card-footer {
-          position: absolute;
-          bottom: 16px;
-          left: 16px;
-          right: 16px;
-          text-align: center;
-          font-size: 10px;
-          color: ${design.textColor};
-          opacity: 0.7;
-        }
-        .signature-section {
-          margin-top: 16px;
-          text-align: center;
-          display: ${design.showPrincipalSignature ? 'block' : 'none'};
-        }
-        .signature-line {
-          border-top: 1px solid ${design.textColor};
           width: 120px;
-          margin: 4px auto 0;
-          padding-top: 4px;
-          font-size: 10px;
-        }
-        .back-content {
-          font-size: 11px;
-          color: ${design.textColor};
-        }
-        .terms-section {
-          background: rgba(0,0,0,0.05);
-          padding: 12px;
+          height: 140px;
+          object-fit: cover;
+          border: 2px solid #1e40af;
           border-radius: 8px;
-          margin-bottom: 12px;
         }
-        .contact-section {
-          text-align: center;
+        .info-section {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .student-label {
+          background: #1e40af;
+          color: white;
+          padding: 3px 10px;
+          font-weight: bold;
+          font-size: 14px;
+          border-radius: 5px 5px 0 0;
+          display: inline-block;
+        }
+        .info-box {
+          background: white;
+          border: 2px solid #1e40af;
+          border-radius: 0 5px 5px 5px;
+          padding: 8px 10px;
+        }
+        .info-row {
+          display: flex;
+          font-size: 12px;
+          margin-bottom: 3px;
+        }
+        .info-label {
+          font-weight: bold;
+          color: #1e40af;
+          width: 80px;
+        }
+        .info-value {
+          flex: 1;
+        }
+        .bottom-logo {
+          position: absolute;
+          bottom: 10px;
+          left: 15px;
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid #1e40af;
+        }
+        /* Back Side Styles */
+        .back-header {
+          background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%);
+          padding: 10px 15px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+        }
+        .back-body {
+          padding: 15px;
+          display: flex;
+          justify-content: space-between;
+        }
+        .back-left {
+          flex: 1;
+          padding-right: 10px;
+        }
+        .back-text {
+          font-size: 11px;
+          margin-bottom: 10px;
+          line-height: 1.5;
+        }
+        .back-contact {
+          font-size: 11px;
+          line-height: 1.8;
+        }
+        .back-qr {
+          width: 100px;
+          height: 100px;
+          background: white;
+          border: 1px solid #ddd;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           font-size: 10px;
+          text-align: center;
+          color: #666;
+        }
+        /* Print Styles */
+        @media print {
+          body {
+            background: white;
+            padding: 0;
+            margin: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .card-container {
+            gap: 0;
+            flex-direction: column;
+            align-items: flex-start;
+          }
+          .card {
+            box-shadow: none;
+            border-radius: 0;
+            border: none;
+          }
+          @page {
+            size: auto;
+            margin: 0;
+          }
         }
       </style>
     </head>
@@ -297,68 +320,62 @@ export const generateIDCardHTML = (idCard, design, school) => {
       <div class="card-container">
         <!-- Front Side -->
         <div class="card">
-          <div class="card-front">
-            <div class="card-header">
-              ${schoolData.logo ? `<img src="${schoolData.logo.url || schoolData.logo}" class="school-logo" alt="School Logo">` : ''}
-              <div class="school-name">${schoolData.name || 'School'}</div>
-              <div class="card-title">${idCard.type.toUpperCase()} ID CARD</div>
+          <div class="front-header">
+            <div class="front-header-content">
+              ${schoolData.logo ? `<img src="${schoolData.logo.url || schoolData.logo}" style="width:45px;height:45px;border-radius:50%;object-fit:cover;border:2px solid white;">` : ''}
+              <span class="front-school-name">${schoolData.name || 'School'}</span>
             </div>
-            
-            <div class="photo-container">
-              ${user.photo ? `<img src="${user.photo.url || user.photo}" class="student-photo" alt="Photo">` : '<div class="student-photo" style="background: #e0e7ff; display: flex; align-items: center; justify-content: center; color: #4f46e5; font-size: 40px;">📷</div>'}
+            <span class="front-header-arabic">جامعة جمهورية</span>
+          </div>
+          <div class="front-body">
+            <div class="photo-section">
+              ${user.photo ? `<img src="${user.photo.url || user.photo}" class="student-photo" alt="Photo">` : '<div class="student-photo" style="background: #dbeafe; display: flex; align-items: center; justify-content: center; color: #1e40af; font-size: 50px;">�</div>'}
             </div>
-            
-            <div class="student-name">${user.name || 'Student Name'}</div>
-            <div class="card-number">${idCard.cardNumber}</div>
-            
-            <div class="details-grid">
-              ${user.class ? `<div class="detail-item"><div class="detail-label">Class</div><div class="detail-value">${user.class.name || user.class}</div></div>` : ''}
-              ${user.section ? `<div class="detail-item"><div class="detail-label">Section</div><div class="detail-value">${user.section}</div></div>` : ''}
-              ${user.rollNumber || idCard.rollNumber ? `<div class="detail-item"><div class="detail-label">Roll No</div><div class="detail-value">${user.rollNumber || idCard.rollNumber}</div></div>` : ''}
-              ${user.customId ? `<div class="detail-item"><div class="detail-label">Student ID</div><div class="detail-value">${user.customId}</div></div>` : ''}
-              <div class="detail-item"><div class="detail-label">Valid From</div><div class="detail-value">${new Date(idCard.issueDate).toLocaleDateString()}</div></div>
-              <div class="detail-item"><div class="detail-label">Valid Until</div><div class="detail-value">${new Date(idCard.expiryDate).toLocaleDateString()}</div></div>
-            </div>
-            
-            <div class="signature-section">
-              <div class="signature-line">Principal</div>
-            </div>
-            
-            <div class="qr-section">
-              <div class="qr-code">
-                <!-- QR Code placeholder - would be replaced with actual QR code -->
-                <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 8px; text-align: center; color: #666;">
-                  QR<br>Code
+            <div class="info-section">
+              <span class="student-label">${idCard.type ? idCard.type.charAt(0).toUpperCase() + idCard.type.slice(1) : 'Student'}</span>
+              <div class="info-box">
+                <div class="info-row">
+                  <span class="info-label">Name:</span>
+                  <span class="info-value">${user.name || 'Student Name'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">ID No:</span>
+                  <span class="info-value">${user.customId || idCard.cardNumber}</span>
+                </div>
+                ${user.class ? `<div class="info-row">
+                  <span class="info-label">Class:</span>
+                  <span class="info-value">${user.class.name || idCard.user?.class?.name || user.class}</span>
+                </div>` : ''}
+                ${user.phone ? `<div class="info-row">
+                  <span class="info-label">Mobile:</span>
+                  <span class="info-value">${user.phone}</span>
+                </div>` : ''}
+                <div class="info-row">
+                  <span class="info-label">Expires:</span>
+                  <span class="info-value">${new Date(idCard.expiryDate).toLocaleDateString()}</span>
                 </div>
               </div>
             </div>
           </div>
+          ${schoolData.logo ? `<img src="${schoolData.logo.url || schoolData.logo}" class="bottom-logo" alt="School Logo">` : ''}
         </div>
         
         <!-- Back Side -->
         <div class="card">
-          <div class="card-back back-content">
-            <div class="terms-section">
-              <strong>Terms & Conditions:</strong>
-              <p style="margin-top: 8px; line-height: 1.4;">${design.termsAndConditions}</p>
+          <div class="back-header">
+            ${schoolData.logo ? `<img src="${schoolData.logo.url || schoolData.logo}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:3px solid white;">` : ''}
+          </div>
+          <div class="back-body">
+            <div class="back-left">
+              <p class="back-text">If found please return to ${schoolData.name || 'school'}.</p>
+              <div class="back-contact">
+                ${schoolData.phone ? `<p>Tel: ${schoolData.phone}</p>` : ''}
+                ${schoolData.email ? `<p>Email: ${schoolData.email}</p>` : ''}
+                ${schoolData.website ? `<p>Website: ${schoolData.website}</p>` : ''}
+              </div>
             </div>
-            
-            <div class="details-grid" style="margin-top: 16px;">
-              ${user.address ? `<div class="detail-item"><div class="detail-label">Address</div><div class="detail-value">${user.address}</div></div>` : ''}
-              ${user.phone ? `<div class="detail-item"><div class="detail-label">Phone</div><div class="detail-value">${user.phone}</div></div>` : ''}
-              ${user.bloodGroup ? `<div class="detail-item"><div class="detail-label">Blood Group</div><div class="detail-value">${user.bloodGroup}</div></div>` : ''}
-              ${user.emergencyContact ? `<div class="detail-item"><div class="detail-label">Emergency</div><div class="detail-value">${user.emergencyContact}</div></div>` : ''}
-            </div>
-            
-            <div class="contact-section">
-              ${schoolData.phone ? `<p>📞 ${schoolData.phone}</p>` : ''}
-              ${schoolData.email ? `<p>✉️ ${schoolData.email}</p>` : ''}
-              ${schoolData.website ? `<p>🌐 ${schoolData.website}</p>` : ''}
-              ${schoolData.address ? `<p>📍 ${schoolData.address}</p>` : ''}
-            </div>
-            
-            <div class="card-footer">
-              ${design.footerText || 'If found, please return to school office'}
+            <div class="back-qr">
+              QR<br>Code
             </div>
           </div>
         </div>

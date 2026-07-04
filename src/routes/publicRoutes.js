@@ -1,5 +1,5 @@
 import express from 'express';
-import { getSchools, getPublicContent, getPublicEvents } from '../controllers/publicContentController.js';
+import { getSchools, getPublicContent, getPublicEvents, getPublicBranches } from '../controllers/publicContentController.js';
 import { createLead } from '../controllers/leadController.js';
 import { logError } from '../controllers/errorLogController.js';
 import Plan from '../models/Plan.js';
@@ -11,6 +11,7 @@ const router = express.Router();
 router.get('/schools', getSchools);
 router.get('/content/:schoolId?', getPublicContent);
 router.get('/events/:schoolId?', getPublicEvents);
+router.get('/branches/:schoolId', getPublicBranches);
 
 // Lead capture
 router.post('/leads', createLead);

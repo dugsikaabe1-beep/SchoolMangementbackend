@@ -8,6 +8,7 @@ import School from '../models/School.js';
 import { uploadToCloudinary } from '../utils/cloudinary.js';
 import fs from 'fs';
 import mongoose from 'mongoose';
+import Branch from '../models/Branch.js';
 
 // --- Public Access ---
 
@@ -26,6 +27,28 @@ export const getSchools = asyncHandler(async (req, res) => {
   }));
 
   res.json(enriched);
+});
+
+// @desc    Get all active branches for a school
+// @route   GET /api/public/branches/:schoolId
+// @access  Public
+export const getPublicBranches = asyncHandler(async (req, res) => {
+  const { schoolId } = req.params;
+
+  if (!schoolId || !mongoose.Types.ObjectId.isValid(schoolId)) {
+    return res.json([]);
+  }
+
+  const branches = await Branch.find({ 
+    tenant: schoolId,
+    status: 'active',
+    deletedAt: { $exists: false }
+  })
+    .select('name code address city')
+    .sort({ name: 1 })
+    .lean();
+
+  res.json(branches);
 });
 
 // @desc    Get public content for a school
