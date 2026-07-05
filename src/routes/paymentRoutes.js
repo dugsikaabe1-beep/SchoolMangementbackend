@@ -16,6 +16,7 @@ import { protect, allowAdmin } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
 import { injectOwnership } from '../middlewares/tenantMiddleware.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
+import { requireFeature } from '../middlewares/featureAccess.js';
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.use(protect);
 router.use(injectOwnership);
 router.use(branchIsolation);
 router.use(checkSubscription);
+router.use(requireFeature('payment-integration'));
 
 // Payment settings routes
 router.get('/settings', getPaymentSettings);

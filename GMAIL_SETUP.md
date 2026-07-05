@@ -72,7 +72,7 @@ EMAIL_FROM="DugsiKaabe <dugsikaabe1@gmail.com>"  # Name <email> format
 ### 5. Test It!
 
 Once the server is running, send a `POST` request to:
-`http://localhost:5000/api/auth/test-email`
+`https://schoolmangementbackend-deployment.up.railway.app/api/auth/test-email`
 
 With this JSON body (use your own email):
 ```json

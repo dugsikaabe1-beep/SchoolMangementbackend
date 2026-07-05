@@ -63,43 +63,62 @@ async function parseWorkbook(buffer, mimetype) {
   return rows;
 }
 
-// ─── POST /api/admin/students/import ─────────────────────────────────────────
-
-export const importStudents = async (req, res) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
-
-  const schoolId = getObjectId(req.user.school || req.schoolId);
-  if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
-
-  // Resolve branch ID
-  let branchId = getObjectId(req.branchId || req.user.branch);
+// Helper function to resolve branch ID (same as adminController)
+const resolveBranchId = async (req) => {
+  // If explicitly set to null (ALL_BRANCHES), return null
+  if (req.branchId === null) {
+    return null;
+  }
+  
+  let branchId = req.branchId || req.user?.branch;
   
   if (!branchId) {
-    // First try to find Main Branch by name or code
+    const schoolId = req.user.school?._id || req.user.school;
     let branch = await Branch.findOne({ 
       tenant: schoolId, 
       status: 'active', 
       deletedAt: { $exists: false },
-      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+      isMain: true
     }).sort({ createdAt: 1 });
 
-    // If no Main Branch found, get first active branch
+    if (!branch) {
+      branch = await Branch.findOne({ 
+        tenant: schoolId, 
+        status: 'active', 
+        deletedAt: { $exists: false },
+        $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+      }).sort({ createdAt: 1 });
+    }
+
     if (!branch) {
       branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
     }
 
-    // If still no branch found, automatically create Main Branch
     if (!branch) {
       branch = await Branch.create({
         tenant: schoolId,
         name: 'Main Branch',
         code: 'MAIN',
+        isMain: true,
         status: 'active',
         createdBy: req.user._id
       });
     }
     branchId = branch._id;
   }
+  return branchId;
+};
+
+// ─── POST /api/admin/students/import ─────────────────────────────────────────
+
+export const importStudents = async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
+
+  const schoolId = req.schoolId || req.user.school?._id || req.user.school;
+  if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
+
+  // Resolve branch ID
+  const branchId = await resolveBranchId(req);
 
   // Resolve academic year ID
   let academicYearId = req.academicYearId;
@@ -140,7 +159,7 @@ export const importStudents = async (req, res) => {
   const results = { created: [], skipped: [], errors: [] };
   const credentialsList = [];
 
-  const existingClasses = await Class.find({ school: schoolId, branch: branchId, isDeleted: { $ne: true } }).lean();
+  const existingClasses = await Class.find({ school: schoolId, branch: branchId, academicYear: academicYearId, isDeleted: { $ne: true } }).lean();
   const classMap = {};
   existingClasses.forEach((c) => {
     classMap[`${c.name.toLowerCase()}|${(c.section || 'a').toLowerCase()}`] = c;
@@ -228,11 +247,12 @@ export const importStudents = async (req, res) => {
           maxStudents: 40,
           school: schoolId,
           branch: branchId,
+          academicYear: academicYearId,
           createdBy: req.user._id,
         });
         classMap[classKey] = classDoc;
       } catch (err) {
-        classDoc = await Class.findOne({ school: schoolId, branch: branchId, name: { $regex: new RegExp(`^${className}$`, 'i') }, section: { $regex: new RegExp(`^${section}$`, 'i') }, isDeleted: { $ne: true } }).lean();
+        classDoc = await Class.findOne({ school: schoolId, branch: branchId, academicYear: academicYearId, name: { $regex: new RegExp(`^${className}$`, 'i') }, section: { $regex: new RegExp(`^${section}$`, 'i') }, isDeleted: { $ne: true } }).lean();
         if (!classDoc) {
           results.errors.push({ row: rowNum, data: { name, phone }, errors: [`Could not resolve or create class "${className} ${section}": ${err.message}`] });
           continue;
@@ -273,6 +293,7 @@ export const importStudents = async (req, res) => {
         class: classDoc._id,
         customId,
         status: 'active',
+        createdBy: req.user._id,
       });
 
       results.created.push({
@@ -485,38 +506,11 @@ export const downloadStudentErrorReport = async (req, res) => {
 export const importExamResults = async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
-  const schoolId = req.user.school;
+  const schoolId = req.schoolId || req.user.school?._id || req.user.school;
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
   // Resolve branch ID
-  let branchId = getObjectId(req.branchId || req.user.branch);
-  
-  if (!branchId) {
-    // First try to find Main Branch by name or code
-    let branch = await Branch.findOne({ 
-      tenant: schoolId, 
-      status: 'active', 
-      deletedAt: { $exists: false },
-      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
-    }).sort({ createdAt: 1 });
-
-    // If no Main Branch found, get first active branch
-    if (!branch) {
-      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
-    }
-
-    // If still no branch found, automatically create Main Branch
-    if (!branch) {
-      branch = await Branch.create({
-        tenant: schoolId,
-        name: 'Main Branch',
-        code: 'MAIN',
-        status: 'active',
-        createdBy: req.user._id
-      });
-    }
-    branchId = branch._id;
-  }
+  const branchId = await resolveBranchId(req);
 
   // Resolve academic year
   let academicYearName = req.academicYearName;
@@ -744,38 +738,11 @@ export const downloadExamTemplate = async (req, res) => {
 export const importTeachers = async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
-  const schoolId = req.user.school;
+  const schoolId = req.schoolId || req.user.school?._id || req.user.school;
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
   // Resolve branch ID
-  let branchId = getObjectId(req.branchId || req.user.branch);
-  
-  if (!branchId) {
-    // First try to find Main Branch by name or code
-    let branch = await Branch.findOne({ 
-      tenant: schoolId, 
-      status: 'active', 
-      deletedAt: { $exists: false },
-      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
-    }).sort({ createdAt: 1 });
-
-    // If no Main Branch found, get first active branch
-    if (!branch) {
-      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
-    }
-
-    // If still no branch found, automatically create Main Branch
-    if (!branch) {
-      branch = await Branch.create({
-        tenant: schoolId,
-        name: 'Main Branch',
-        code: 'MAIN',
-        status: 'active',
-        createdBy: req.user._id
-      });
-    }
-    branchId = branch._id;
-  }
+  const branchId = await resolveBranchId(req);
 
   // Resolve academic year ID
   let academicYearId = req.academicYearId;
@@ -897,6 +864,7 @@ export const importTeachers = async (req, res) => {
         academicYear: academicYearId,
         customId,
         status: 'active',
+        createdBy: req.user._id,
       });
       results.created.push({ row: rowNum, name: teacher.name, customId: teacher.customId });
     } catch (err) {
@@ -908,7 +876,7 @@ export const importTeachers = async (req, res) => {
     logAction(req, {
       action: 'TEACHERS_BULK_IMPORT',
       module: 'TEACHERS',
-      details: { count: results.created.length, summary: results.summary }
+      details: { count: results.created.length }
     });
   }
 

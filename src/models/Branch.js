@@ -33,6 +33,8 @@ const branchSchema = new mongoose.Schema(
       ref: 'Role'
     },
 
+    isMain: { type: Boolean, default: false }, // Mark as Main Branch
+
     status: { 
       type: String, 
       enum: ['active', 'inactive', 'archived'], 

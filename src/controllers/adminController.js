@@ -70,8 +70,17 @@ const resolveBranchId = async (req) => {
       tenant: schoolId, 
       status: 'active', 
       deletedAt: { $exists: false },
-      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+      isMain: true
     }).sort({ createdAt: 1 });
+
+    if (!branch) {
+      branch = await Branch.findOne({ 
+        tenant: schoolId, 
+        status: 'active', 
+        deletedAt: { $exists: false },
+        $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+      }).sort({ createdAt: 1 });
+    }
 
     if (!branch) {
       branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
@@ -82,6 +91,7 @@ const resolveBranchId = async (req) => {
         tenant: schoolId,
         name: 'Main Branch',
         code: 'MAIN',
+        isMain: true,
         status: 'active',
         createdBy: req.user._id
       });

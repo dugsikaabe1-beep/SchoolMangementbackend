@@ -103,8 +103,8 @@ app.use((req, res, next) => {
     origin === 'https://dugsikabe.vercel.app' ||
     origin === 'https://dugsihub-lilac.vercel.app' ||
     origin === 'https://dugsimaamul.vercel.app' ||
-    origin === 'https://schoolmangementbackend-production.up.railway.app' ||
-    (process.env.NODE_ENV === 'development' && origin && origin.startsWith('http://localhost:'));
+    origin === 'https://schoolmangementbackend-deployment.up.railway.app' ||
+    (process.env.NODE_ENV === 'development' && origin && origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app:'));
 
   if (isAllowedOrigin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -183,7 +183,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:", "res.cloudinary.com"],
-      connectSrc: ["'self'", "https://api.cloudinary.com", "https://schoolmangementbackend-production.up.railway.app"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "https://schoolmangementbackend-deployment.up.railway.app"],
     },
   },
 }));

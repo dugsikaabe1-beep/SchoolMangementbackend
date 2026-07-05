@@ -10,10 +10,10 @@ export const initSocket = (server) => {
         const isDev = process.env.NODE_ENV === 'development';
         const allowedProdOrigins = [
           'https://dugsihub-lilac.vercel.app',
-          'https://schoolmangementbackend-production.up.railway.app'
+          'https://schoolmangementbackend-deployment.up.railway.app'
         ];
 
-        const isAllowed = isDev || (!origin) || allowedProdOrigins.includes(origin) || (origin && origin.startsWith('http://localhost:'));
+        const isAllowed = isDev || (!origin) || allowedProdOrigins.includes(origin) || (origin && origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app:'));
 
         if (isAllowed) return callback(null, true);
         console.log(`[Socket] Rejecting CORS for origin: ${origin}`);

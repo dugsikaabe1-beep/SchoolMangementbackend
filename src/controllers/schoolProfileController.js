@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import School from '../models/School.js';
 import Plan from '../models/Plan.js';
+import Branch from '../models/Branch.js';
 import asyncHandler from 'express-async-handler';
 
 // @desc    Check school profile completion status
@@ -219,7 +220,24 @@ export const completeSchoolProfile = asyncHandler(async (req, res) => {
       description: description || ''
     });
     
+    // Create Main Branch automatically
+    const mainBranch = await Branch.create({
+      tenant: school._id,
+      name: 'Main Branch',
+      code: 'MAIN',
+      address,
+      city,
+      country,
+      phone,
+      email,
+      principalName,
+      isMain: true,
+      createdBy: admin._id
+    });
+    
     admin.school = school._id;
+    admin.branch = mainBranch._id;
+    admin.branchScope = 'ALL_BRANCHES'; // School Admin can see all branches
     admin.schoolProfileCompleted = true;
     // Clear metadata after use
     admin.metadata = {};

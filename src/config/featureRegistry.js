@@ -46,6 +46,7 @@ export const FEATURE_REGISTRY = [
 
   // ── Finance ───────────────────────────────────────────────────────────
   { code: 'finance',        label: 'Fees & Payments',       category: 'Finance' },
+  { code: 'payment-integration', label: 'Payment Integration', category: 'Finance' },
   { code: 'invoices',       label: 'Invoices',              category: 'Finance' },
   { code: 'discounts',      label: 'Discounts',             category: 'Finance' },
   { code: 'revenue-reports',label: 'Revenue Reports',       category: 'Finance' },
@@ -154,7 +155,7 @@ export const STARTER_FEATURES = [
 export const PROFESSIONAL_FEATURES = [
   ...STARTER_FEATURES,
   'parents', 'sections', 'exams', 'results', 'exam-halls', 'promotions',
-  'finance', 
+  'finance', 'payment-integration',
   'parent-app', 'student-app', 'teacher-app',
   'roles', 'permissions', 'website', 'events',
   'academic-reports', 'attendance-reports', 'student-reports',

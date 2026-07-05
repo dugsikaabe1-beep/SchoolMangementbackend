@@ -34,6 +34,13 @@ export const createBranch = async (req, res) => {
   try {
     const { name, code, phone, email, address, city, country, principalName, loginEmail, password } = req.body;
 
+    // Check if it's the first branch - if yes, set isMain to true
+    const existingBranches = await Branch.countDocuments({ 
+      tenant: req.schoolId, 
+      deletedAt: { $exists: false } 
+    });
+    const isMain = existingBranches === 0;
+
     const branch = await Branch.create({
       tenant: req.schoolId,
       name,
@@ -46,6 +53,7 @@ export const createBranch = async (req, res) => {
       principalName,
       loginEmail,
       password,
+      isMain,
       createdBy: req.user._id
     });
 
@@ -105,6 +113,13 @@ export const deleteBranch = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Branch not found'
+      });
+    }
+
+    if (branch.isMain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Main Branch cannot be deleted'
       });
     }
 

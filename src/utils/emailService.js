@@ -233,7 +233,7 @@ const sendEmail = async (options) => {
 };
 
 export const sendVerificationEmail = async (user, token) => {
-  const frontendBase = process.env.PUBLIC_FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  const frontendBase = process.env.PUBLIC_FRONTEND_URL || process.env.CLIENT_URL || 'https://schoolmangementbackend-deployment.up.railway.app';
   const verificationUrl = `${frontendBase.replace(/\/$/, '')}/verify-email?token=${token}`;
   const trimmedUserName = user.name ? user.name.trim() : 'User';
   const html = getVerificationEmailTemplate(trimmedUserName, verificationUrl);

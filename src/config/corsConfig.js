@@ -55,7 +55,7 @@ export const originMatcher = (allowed) => (origin, callback) => {
 
   // 3. In development, be more permissive with common dev domains if not explicitly matched
   if (process.env.NODE_ENV === 'development') {
-      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1') || origin.includes('vercel.app')) {
+      if (origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app') || origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app') || origin.includes('vercel.app')) {
       return callback(null, true);
     }
   }

@@ -122,6 +122,36 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    // Auto-assign Main Branch if user doesn't have a branch yet
+    if (!user.branch && user.school) {
+      const Branch = (await import('../models/Branch.js')).default;
+      let mainBranch = await Branch.findOne({ 
+        tenant: user.school._id, 
+        isMain: true 
+      });
+
+      // If no Main Branch, create one
+      if (!mainBranch) {
+        mainBranch = await Branch.create({
+          tenant: user.school._id,
+          name: 'Main Branch',
+          code: 'MAIN',
+          isMain: true,
+          status: 'active'
+        });
+        console.log(`✅ Auto-created Main Branch for school: ${user.school.name}`);
+      }
+
+      // Update user's branch
+      if (user._id) { // Only update if it's a real User (not Branch login)
+        await User.findByIdAndUpdate(user._id, { 
+          branch: mainBranch._id 
+        });
+        user.branch = mainBranch;
+        console.log(`✅ Assigned Main Branch to user: ${user.name}`);
+      }
+    }
+
     // Set context on request
     req.user = user;
     
