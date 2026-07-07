@@ -101,6 +101,7 @@ export const generateIDCard = async (req, res) => {
     const idCard = new IDCard({
       school: schoolId,
       branch: branchId || user.branch,
+      academicYear: req.body.academicYear || req.academicYearId,
       user: userId,
       type,
       cardNumber,
@@ -665,6 +666,7 @@ export const reprintIDCard = async (req, res) => {
     const newCard = new IDCard({
       school: originalCard.school,
       branch: originalCard.branch,
+      academicYear: originalCard.academicYear || req.academicYearId || req.body.academicYear,
       user: originalCard.user,
       type: originalCard.type,
       cardNumber: newCardNumber,

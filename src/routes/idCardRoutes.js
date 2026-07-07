@@ -18,6 +18,9 @@ import {
 import { protect, allowAdmin, allowTeacher, allowParent, allowSuperAdmin } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
 import { checkPermission } from '../middlewares/permissionMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 
 const router = express.Router();
 
@@ -25,8 +28,11 @@ const router = express.Router();
 router.get('/verify/:token', verifyIDCard);
 
 // Protected routes
-router.use(protect);
-router.use(branchIsolation);
+router.use(asyncHandler(protect));
+router.use(asyncHandler(injectBranch));
+router.use(injectOwnership);
+router.use(asyncHandler(branchIsolation));
+router.use(asyncHandler(injectAcademicYear));
 
 // ID Card Design routes
 router.get('/designs', getIDCardDesigns);
