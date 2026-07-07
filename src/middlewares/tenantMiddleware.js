@@ -1,5 +1,6 @@
 import School from '../models/School.js';
 import Branch from '../models/Branch.js';
+import User from '../models/User.js';
 import { isValidSubdomainLabel, securityLog } from '../utils/securityUtils.js';
 
 const RESERVED = new Set([
@@ -228,6 +229,7 @@ export const requireTenant = (req, res, next) => {
  * Helper function to resolve branch (can be called from anywhere)
  */
 export const resolveBranch = async (schoolId, userId = null) => {
+  console.log('[resolveBranch] Called with schoolId:', schoolId, 'userId:', userId);
   // Try to find main branch
   let branch = await Branch.findOne({ 
     tenant: schoolId, 
@@ -235,6 +237,7 @@ export const resolveBranch = async (schoolId, userId = null) => {
     deletedAt: { $exists: false },
     isMain: true
   }).sort({ createdAt: 1 });
+  console.log('[resolveBranch] Looked for isMain:true, found:', branch);
 
   if (!branch) {
     branch = await Branch.findOne({ 
@@ -243,6 +246,7 @@ export const resolveBranch = async (schoolId, userId = null) => {
       deletedAt: { $exists: false },
       $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
     }).sort({ createdAt: 1 });
+    console.log('[resolveBranch] Looked for name=Main Branch, found:', branch);
   }
 
   if (!branch) {
@@ -251,9 +255,11 @@ export const resolveBranch = async (schoolId, userId = null) => {
       status: 'active', 
       deletedAt: { $exists: false } 
     }).sort({ createdAt: 1 });
+    console.log('[resolveBranch] Looked for any active branch, found:', branch);
   }
 
   if (!branch) {
+    console.log('[resolveBranch] Creating new branch');
     branch = await Branch.create({
       tenant: schoolId,
       name: 'Main Branch',
@@ -263,6 +269,7 @@ export const resolveBranch = async (schoolId, userId = null) => {
       createdBy: userId || null
     });
   }
+  console.log('[resolveBranch] Returning branch:', branch._id, branch.name);
   return branch;
 };
 
@@ -275,6 +282,10 @@ export const resolveBranch = async (schoolId, userId = null) => {
  * 4. Creates Main Branch if none exists
  */
 export const injectBranch = async (req, res, next) => {
+  console.log('[injectBranch] Starting');
+  console.log('[injectBranch] req.isSuperAdminRoute:', req.isSuperAdminRoute);
+  console.log('[injectBranch] req.user:', req.user ? { id: req.user._id, school: req.user.school, branch: req.user.branch } : 'NOT FOUND');
+  console.log('[injectBranch] req.schoolId:', req.schoolId);
   // Skip if super admin route
   if (req.isSuperAdminRoute) {
     return next();
@@ -283,11 +294,13 @@ export const injectBranch = async (req, res, next) => {
   // Set schoolId from user if not already set
   if (!req.schoolId && req.user?.school) {
     req.schoolId = req.user.school;
+    console.log('[injectBranch] Set schoolId from user.school:', req.schoolId);
   }
 
   let branchId = null;
   const schoolId = req.schoolId;
   if (!schoolId) {
+    console.log('[injectBranch] No schoolId, returning next');
     return next();
   }
 
@@ -295,16 +308,32 @@ export const injectBranch = async (req, res, next) => {
   const branchIdFromHeader = req.headers['x-branch-id'];
   if (branchIdFromHeader) {
     branchId = branchIdFromHeader;
+    console.log('[injectBranch] Got branchId from header:', branchId);
   } else if (req.user?.branch) {
     // 2. Check user's branch
     branchId = req.user.branch;
+    console.log('[injectBranch] Got branchId from user.branch:', branchId);
   } else {
     // 3. Resolve main branch or create
+    console.log('[injectBranch] Calling resolveBranch with schoolId:', schoolId);
     const branch = await resolveBranch(schoolId, req.user?._id);
     branchId = branch._id;
+    console.log('[injectBranch] Resolved branch:', branch);
   }
 
   req.branchId = branchId;
+  console.log('[injectBranch] Set req.branchId to:', req.branchId);
+
+  // If user doesn't have a branch assigned yet, assign this one
+  if (req.user && !req.user.branch) {
+    console.log('[injectBranch] Updating user to set branch to:', branchId);
+    await User.findByIdAndUpdate(
+      req.user._id, 
+      { branch: branchId }, 
+      { new: true }
+    );
+  }
+
   next();
 };
 

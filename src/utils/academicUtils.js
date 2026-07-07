@@ -4,21 +4,27 @@ import AcademicYear from '../models/AcademicYear.js';
  * Get or initialize the current academic year for a school/branch
  */
 export const getCurrentAcademicYear = async (schoolId, branchId) => {
+  console.log('[getCurrentAcademicYear] Called with schoolId:', schoolId, 'branchId:', branchId);
   try {
     const query = { tenant: schoolId, isCurrent: true };
     if (branchId) query.branch = branchId;
+    console.log('[getCurrentAcademicYear] Query 1:', query);
 
     let academicYear = await AcademicYear.findOne(query);
+    console.log('[getCurrentAcademicYear] Result 1 (isCurrent):', academicYear);
 
     // Fallback: If no current year marked, get the most recent active one
     if (!academicYear) {
       const fallbackQuery = { tenant: schoolId, status: 'active' };
       if (branchId) fallbackQuery.branch = branchId;
+      console.log('[getCurrentAcademicYear] Query 2 (fallback):', fallbackQuery);
       academicYear = await AcademicYear.findOne(fallbackQuery).sort({ startDate: -1 });
+      console.log('[getCurrentAcademicYear] Result 2 (fallback):', academicYear);
     }
 
     // If no academic year exists at all, create a default one for the current year
     if (!academicYear) {
+      console.log('[getCurrentAcademicYear] Creating new academic year');
       const currentDate = new Date();
       const currentYear = currentDate.getFullYear();
       const nextYear = currentYear + 1;
@@ -32,6 +38,7 @@ export const getCurrentAcademicYear = async (schoolId, branchId) => {
         isCurrent: true,
         status: 'active',
       });
+      console.log('[getCurrentAcademicYear] Created new academic year:', academicYear);
     }
 
     return academicYear;

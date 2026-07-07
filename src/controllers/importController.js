@@ -84,18 +84,28 @@ const resolveBranchId = async (req) => {
 // ─── POST /api/admin/students/import ─────────────────────────────────────────
 
 export const importStudents = async (req, res) => {
+  console.log('[IMPORT CONTROLLER] req.schoolId:', req.schoolId);
+  console.log('[IMPORT CONTROLLER] req.user.school:', req.user.school);
+  console.log('[IMPORT CONTROLLER] req.branchId:', req.branchId);
+  console.log('[IMPORT CONTROLLER] req.user.branch:', req.user.branch);
+  console.log('[IMPORT CONTROLLER] req.academicYearId:', req.academicYearId);
+
   if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
   const schoolId = req.schoolId || req.user.school?._id || req.user.school;
+  console.log('[IMPORT CONTROLLER] schoolId:', schoolId);
+
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
   // Resolve branch ID
   const branchId = await resolveBranchId(req);
+  console.log('[IMPORT CONTROLLER] branchId:', branchId);
 
   // Resolve academic year ID
   let academicYearId = req.academicYearId;
   if (!academicYearId) {
     const academicYear = await getCurrentAcademicYear(schoolId, branchId);
+    console.log('[IMPORT CONTROLLER] academicYear:', academicYear);
     if (!academicYear) {
       return res.status(400).json({
         success: false,
@@ -105,6 +115,7 @@ export const importStudents = async (req, res) => {
     }
     academicYearId = academicYear._id;
   }
+  console.log('[IMPORT CONTROLLER] academicYearId:', academicYearId);
 
   // credentialMode: 'auto' (default) or 'delayed'
   const credentialMode = req.body.credentialMode === 'delayed' ? 'delayed' : 'auto';
@@ -213,7 +224,18 @@ export const importStudents = async (req, res) => {
         continue;
       }
       try {
-        classDoc = await Class.create({
+        // Let's make ABSOLUTELY SURE we have all required fields
+        if (!branchId) {
+          console.log('[IMPORT CONTROLLER] branchId was missing, recalculating');
+          branchId = await resolveBranchId(req);
+        }
+        if (!academicYearId) {
+          console.log('[IMPORT CONTROLLER] academicYearId was missing, recalculating');
+          const academicYear = await getCurrentAcademicYear(schoolId, branchId);
+          academicYearId = academicYear._id;
+        }
+
+        const classData = {
           name: className.charAt(0).toUpperCase() + className.slice(1),
           section,
           maxStudents: 40,
@@ -221,7 +243,12 @@ export const importStudents = async (req, res) => {
           branch: branchId,
           academicYear: academicYearId,
           createdBy: req.user._id,
-        });
+        };
+        console.log('[IMPORT CONTROLLER] Final Class Data:', JSON.stringify(classData, null, 2));
+        console.log('[IMPORT CONTROLLER] classData.school:', classData.school, '(typeof:', typeof classData.school, ')');
+        console.log('[IMPORT CONTROLLER] classData.branch:', classData.branch, '(typeof:', typeof classData.branch, ')');
+        console.log('[IMPORT CONTROLLER] classData.academicYear:', classData.academicYear, '(typeof:', typeof classData.academicYear, ')');
+        classDoc = await Class.create(classData);
         classMap[classKey] = classDoc;
       } catch (err) {
         classDoc = await Class.findOne({ school: schoolId, branch: branchId, academicYear: academicYearId, name: { $regex: new RegExp(`^${className}$`, 'i') }, section: { $regex: new RegExp(`^${section}$`, 'i') }, isDeleted: { $ne: true } }).lean();
