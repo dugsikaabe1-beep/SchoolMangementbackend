@@ -285,15 +285,17 @@ export const completeSchoolProfile = async (req, res) => {
     });
 
     // Auto create Main Branch
-    await Branch.create({
+    const mainBranch = await Branch.create({
       tenant: school._id,
       name: 'Main Branch',
       code: 'MAIN',
+      isMain: true,
       status: 'active',
       createdBy: user._id
     });
 
     user.school = school._id;
+    user.branch = mainBranch._id; // Assign Main Branch to school admin!
     user.schoolProfileCompleted = true;
     await user.save();
 

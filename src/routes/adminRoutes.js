@@ -165,7 +165,7 @@ import {
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
-import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 import { injectAcademicYear } from '../utils/academicUtils.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
 import { checkPlanLimits } from '../middlewares/limitMiddleware.js';
@@ -176,6 +176,7 @@ const router = express.Router();
 
 // Apply auth, ownership, branch isolation and academic year middleware to all routes
 router.use(asyncHandler(protect));
+router.use(asyncHandler(injectBranch));
 router.use(injectOwnership);
 router.use(asyncHandler(branchIsolation));
 router.use(asyncHandler(injectAcademicYear));

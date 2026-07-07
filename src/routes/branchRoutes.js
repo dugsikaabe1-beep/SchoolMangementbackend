@@ -15,12 +15,15 @@ import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkPlanLimits } from '../middlewares/limitMiddleware.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 import { auditMiddleware } from '../utils/auditLogger.js';
-import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(asyncHandler(protect));
+router.use(asyncHandler(injectBranch));
+router.use(asyncHandler(injectAcademicYear));
 router.use(injectOwnership);
 router.use(auditMiddleware('BRANCH_MANAGEMENT'));
 router.use(checkModuleAccess('branches'));

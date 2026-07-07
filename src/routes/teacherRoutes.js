@@ -26,7 +26,8 @@ import {
 } from '../controllers/examHallController.js';
 import { protect, allowTeacher } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
-import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
@@ -36,6 +37,8 @@ const router = express.Router();
 // Apply auth middleware to all routes
 router.use(asyncHandler(protect));
 router.use(allowTeacher);
+router.use(asyncHandler(injectBranch));
+router.use(asyncHandler(injectAcademicYear));
 router.use(injectOwnership);
 router.use(asyncHandler(branchIsolation));
 

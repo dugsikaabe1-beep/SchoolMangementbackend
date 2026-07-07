@@ -18,7 +18,8 @@ import {
 import { protect, allowParent, allowAdmin } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
-import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
 
 const router = express.Router();
@@ -27,6 +28,8 @@ const router = express.Router();
 const parentRouter = express.Router();
 parentRouter.use(asyncHandler(protect));
 parentRouter.use(allowParent);
+parentRouter.use(asyncHandler(injectBranch));
+parentRouter.use(asyncHandler(injectAcademicYear));
 parentRouter.use(injectOwnership);
 parentRouter.use(asyncHandler(branchIsolation));
 

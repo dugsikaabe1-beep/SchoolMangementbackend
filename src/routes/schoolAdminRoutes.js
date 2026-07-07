@@ -33,7 +33,8 @@ import { uploadImageMiddleware } from '../middlewares/uploadMiddleware.js';
 import { protect } from '../middlewares/authMiddleware.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
-import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
 
 const router = express.Router();
 
@@ -42,6 +43,8 @@ router.post('/login', asyncHandler(schoolAdminLogin));
 
 // Protected routes (School Admin only)
 router.use(asyncHandler(protect));
+router.use(asyncHandler(injectBranch));
+router.use(asyncHandler(injectAcademicYear));
 router.use(injectOwnership);
 
 // Middleware to ensure only School Admin can access

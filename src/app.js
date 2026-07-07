@@ -206,9 +206,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 // --- 2. TENANT ISOLATION ---
 app.use(asyncHandler(detectTenant));
-app.use(asyncHandler(injectBranch));
-app.use(asyncHandler(injectAcademicYear));
-app.use(injectOwnership);
 app.use('/api/', apiActivityMiddleware);
 
 // --- 2.5 PROFILE COMPLETION GUARD ---

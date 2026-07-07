@@ -225,34 +225,47 @@ export const requireTenant = (req, res, next) => {
 };
 
 /**
- * Ownership Middleware
- * Automatically injects tenantId (school), branchId, and academicYearId into req.body for creations.
+ * Helper function to resolve branch (can be called from anywhere)
  */
-export const injectOwnership = (req, res, next) => {
-  // Also check if user has a school (from auth) to set req.school/req.schoolId
-  if (!req.schoolId && req.user?.school) {
-    req.schoolId = req.user.school;
+export const resolveBranch = async (schoolId, userId = null) => {
+  // Try to find main branch
+  let branch = await Branch.findOne({ 
+    tenant: schoolId, 
+    status: 'active', 
+    deletedAt: { $exists: false },
+    isMain: true
+  }).sort({ createdAt: 1 });
+
+  if (!branch) {
+    branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+    }).sort({ createdAt: 1 });
   }
-  
-  // Inject school, branch, and academic year into POST requests if not present
-  if (req.method === 'POST') {
-    if (req.schoolId && !req.body.school) {
-      req.body.school = req.schoolId;
-    }
-    if (req.branchId && !req.body.branch) {
-      req.body.branch = req.branchId;
-    }
-    if (req.academicYearId && !req.body.academicYear) {
-      req.body.academicYear = req.academicYearId;
-    }
+
+  if (!branch) {
+    branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false } 
+    }).sort({ createdAt: 1 });
   }
-  next();
+
+  if (!branch) {
+    branch = await Branch.create({
+      tenant: schoolId,
+      name: 'Main Branch',
+      code: 'MAIN',
+      isMain: true,
+      status: 'active',
+      createdBy: userId || null
+    });
+  }
+  return branch;
 };
 
-/**
- * Super-admin auth and APIs must not run in an active school tenant context
- * (prevents confused-deputy / cross-context token use on school hosts).
- */
 /**
  * Inject Branch Middleware
  * Automatically resolves branchId:
@@ -267,8 +280,13 @@ export const injectBranch = async (req, res, next) => {
     return next();
   }
 
+  // Set schoolId from user if not already set
+  if (!req.schoolId && req.user?.school) {
+    req.schoolId = req.user.school;
+  }
+
   let branchId = null;
-  const schoolId = req.schoolId || req.user?.school;
+  const schoolId = req.schoolId;
   if (!schoolId) {
     return next();
   }
@@ -282,44 +300,47 @@ export const injectBranch = async (req, res, next) => {
     branchId = req.user.branch;
   } else {
     // 3. Resolve main branch or create
-    let branch = await Branch.findOne({ 
-      tenant: schoolId, 
-      status: 'active', 
-      deletedAt: { $exists: false },
-      isMain: true
-    }).sort({ createdAt: 1 });
-
-    if (!branch) {
-      branch = await Branch.findOne({ 
-        tenant: schoolId, 
-        status: 'active', 
-        deletedAt: { $exists: false },
-        $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
-      }).sort({ createdAt: 1 });
-    }
-
-    if (!branch) {
-      branch = await Branch.findOne({ 
-        tenant: schoolId, 
-        status: 'active', 
-        deletedAt: { $exists: false } 
-      }).sort({ createdAt: 1 });
-    }
-
-    if (!branch) {
-      branch = await Branch.create({
-        tenant: schoolId,
-        name: 'Main Branch',
-        code: 'MAIN',
-        isMain: true,
-        status: 'active',
-        createdBy: req.user?._id || null
-      });
-    }
+    const branch = await resolveBranch(schoolId, req.user?._id);
     branchId = branch._id;
   }
 
   req.branchId = branchId;
+  next();
+};
+
+/**
+ * Ownership Middleware
+ * Automatically injects tenantId (school), branchId, and academicYearId into req.body for creations.
+ */
+export const injectOwnership = (req, res, next) => {
+  // Set schoolId from user if not set
+  if (!req.schoolId && req.user?.school) {
+    req.schoolId = req.user.school;
+  }
+
+  // Set branchId from user if not already set
+  if (!req.branchId && req.user?.branch) {
+    req.branchId = req.user.branch;
+  }
+
+  // Set academicYearId from headers
+  const academicYearIdFromHeader = req.headers['x-academic-year-id'];
+  if (academicYearIdFromHeader) {
+    req.academicYearId = academicYearIdFromHeader;
+  }
+
+  // Inject school, branch, and academic year into POST/PUT/PATCH requests if not present
+  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+    if (req.schoolId && !req.body.school) {
+      req.body.school = req.schoolId;
+    }
+    if (req.branchId && !req.body.branch) {
+      req.body.branch = req.branchId;
+    }
+    if (req.academicYearId && !req.body.academicYear) {
+      req.body.academicYear = req.academicYearId;
+    }
+  }
   next();
 };
 
