@@ -18,19 +18,24 @@ export const seedSuperAdmin = async () => {
     if (superAdmin) {
       console.log('[Super Admin Seeding] Super Admin already exists. Updating if necessary...');
       
-      // Ensure role is Super Admin, status is active, isEmailVerified is true
+      // Ensure role is Super Admin, status is active, isEmailVerified is true, and password is correct
+      const isPasswordCorrect = await superAdmin.matchPassword(password);
       const needsUpdate = 
         superAdmin.role !== 'superadmin' ||
-        superAdmin.role !== 'super_admin' ||
         !superAdmin.isSuperAdmin ||
         superAdmin.status !== 'active' ||
-        !superAdmin.isEmailVerified;
+        !superAdmin.isEmailVerified ||
+        !isPasswordCorrect;
 
       if (needsUpdate) {
         superAdmin.role = 'superadmin';
         superAdmin.isSuperAdmin = true;
         superAdmin.status = 'active';
         superAdmin.isEmailVerified = true;
+        if (!isPasswordCorrect) {
+          // Reset password to correct one if not matching
+          superAdmin.password = password;
+        }
         await superAdmin.save();
         console.log('[Super Admin Seeding] Super Admin updated successfully!');
       } else {
@@ -39,13 +44,10 @@ export const seedSuperAdmin = async () => {
     } else {
       console.log('[Super Admin Seeding] Creating default Super Admin...');
       
-      // Hash password using bcrypt (12 rounds, matching user schema)
-      const hashedPassword = await bcrypt.hash(password, 12);
-      
       superAdmin = await User.create({
         name: 'Super Admin',
         email: email.toLowerCase(),
-        password: hashedPassword,
+        password: password,
         role: 'superadmin',
         isSuperAdmin: true,
         status: 'active',

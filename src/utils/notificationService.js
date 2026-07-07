@@ -1,9 +1,13 @@
 import Notification from '../models/Notification.js';
 import School from '../models/School.js';
 import User from '../models/User.js';
+import ChannelProvider from '../models/ChannelProvider.js';
 import DeliveryLog from '../models/DeliveryLog.js';
 import nodemailer from 'nodemailer';
 import { emitToUser, emitToSchool } from './socket.js';
+import fcmProvider from '../services/providers/fcmProvider.js';
+import oneSignalProvider from '../services/providers/oneSignalProvider.js';
+import smsProvider from '../services/providers/smsProvider.js';
 
 /**
  * CRITICAL: Recipient-Based Communication Service
@@ -20,7 +24,7 @@ import { emitToUser, emitToSchool } from './socket.js';
  */
 async function resolveRecipient(recipientId, schoolId) {
   const user = await User.findById(recipientId)
-    .select('name email phone linkedStudents school branch role status isDeleted')
+    .select('name email phone linkedStudents school branch role status isDeleted fcmTokens oneSignalPlayerIds')
     .lean();
 
   if (!user) {
@@ -44,7 +48,9 @@ async function resolveRecipient(recipientId, schoolId) {
     email: user.email,
     phone: user.phone,
     schoolId: user.school,
-    branchId: user.branch
+    branchId: user.branch,
+    fcmTokens: user.fcmTokens,
+    oneSignalPlayerIds: user.oneSignalPlayerIds
   };
 }
 
@@ -253,30 +259,192 @@ export const sendNotification = async ({
       }
     }
 
-    // STEP 6: Push Notifications (if requested)
-    if (channels.includes('push')) {
+    // STEP 6: FCM Push Notifications (if requested)
+    if (channels.includes('push') && recipient.fcmTokens?.length > 0) {
+      const activeFcmTokens = recipient.fcmTokens.filter(t => t.active);
+      for (const tokenData of activeFcmTokens) {
+        try {
+          const result = await fcmProvider.sendPush({
+            token: tokenData.token,
+            title,
+            body: message,
+            data: {
+              notificationId: String(notification._id),
+              actionLink
+            }
+          });
+
+          usedChannels.push('push');
+          console.log(`[NotificationService] FCM push sent to ${recipient.name}`);
+
+          const pushLog = await DeliveryLog.create({
+            notificationId: notification._id,
+            tenantId: schoolId,
+            school: schoolId,
+            branch: branchId || recipient.branchId,
+            channel: 'push',
+            provider: 'fcm',
+            to: {
+              userId: recipient.userId,
+              name: recipient.name,
+              role: recipient.role,
+              token: tokenData.token
+            },
+            providerMessageId: result.providerMessageId,
+            status: result.status,
+            sentAt: new Date(),
+            response: result.response
+          });
+          deliveryLogs.push(pushLog);
+          notification.deliverySummary.sent++;
+        } catch (pushError) {
+          console.error('[NotificationService] FCM push delivery failed:', pushError.message);
+          notification.deliverySummary.failed++;
+          
+          await DeliveryLog.create({
+            notificationId: notification._id,
+            tenantId: schoolId,
+            school: schoolId,
+            branch: branchId || recipient.branchId,
+            channel: 'push',
+            provider: 'fcm',
+            to: {
+              userId: recipient.userId,
+              name: recipient.name,
+              role: recipient.role
+            },
+            status: 'failed',
+            failedAt: new Date(),
+            lastError: pushError.message
+          });
+        }
+      }
+    }
+
+    // STEP 7: OneSignal Web Push Notifications (if requested)
+    if (channels.includes('push') && recipient.oneSignalPlayerIds?.length > 0) {
+      const activePlayerIds = recipient.oneSignalPlayerIds.filter(t => t.active);
+      const channelProviders = await getTenantChannelProviders(schoolId);
+      const oneSignalConfig = channelProviders.find(p => p.providerKey === 'onesignal_push')?.config || {};
+      
+      for (const playerData of activePlayerIds) {
+        try {
+          const result = await oneSignalProvider.sendWebPush({
+            playerId: playerData.playerId,
+            title,
+            body: message,
+            data: {
+              notificationId: String(notification._id),
+              actionLink
+            },
+            config: oneSignalConfig
+          });
+
+          usedChannels.push('push');
+          console.log(`[NotificationService] OneSignal push sent to ${recipient.name}`);
+
+          const pushLog = await DeliveryLog.create({
+            notificationId: notification._id,
+            tenantId: schoolId,
+            school: schoolId,
+            branch: branchId || recipient.branchId,
+            channel: 'push',
+            provider: 'onesignal',
+            to: {
+              userId: recipient.userId,
+              name: recipient.name,
+              role: recipient.role,
+              playerId: playerData.playerId
+            },
+            providerMessageId: result.providerMessageId,
+            status: result.status,
+            sentAt: new Date(),
+            response: result.response
+          });
+          deliveryLogs.push(pushLog);
+          notification.deliverySummary.sent++;
+        } catch (pushError) {
+          console.error('[NotificationService] OneSignal push delivery failed:', pushError.message);
+          notification.deliverySummary.failed++;
+          
+          await DeliveryLog.create({
+            notificationId: notification._id,
+            tenantId: schoolId,
+            school: schoolId,
+            branch: branchId || recipient.branchId,
+            channel: 'push',
+            provider: 'onesignal',
+            to: {
+              userId: recipient.userId,
+              name: recipient.name,
+              role: recipient.role
+            },
+            status: 'failed',
+            failedAt: new Date(),
+            lastError: pushError.message
+          });
+        }
+      }
+    }
+
+    // STEP 8: SMS Notifications (if requested)
+    if (channels.includes('sms') && recipient.phone) {
       try {
-        // Create queued delivery log for Push processing
-        const pushLog = await DeliveryLog.create({
+        const channelProviders = await getTenantChannelProviders(schoolId);
+        const smsProviderData = channelProviders.find(p => p.providerType === 'sms') || {};
+        const smsConfig = smsProviderData.config || {};
+        const providerName = smsProviderData.providerKey?.replace('_sms', '') || 'generic';
+        
+        const result = await smsProvider.sendSms({
+          to: recipient.phone,
+          message,
+          provider: providerName,
+          config: smsConfig
+        });
+
+        usedChannels.push('sms');
+        console.log(`[NotificationService] SMS sent to ${recipient.name} (${recipient.phone})`);
+
+        const smsLog = await DeliveryLog.create({
           notificationId: notification._id,
           tenantId: schoolId,
           school: schoolId,
           branch: branchId || recipient.branchId,
-          channel: 'push',
-          provider: 'queued_push',
+          channel: 'sms',
+          provider: providerName,
           to: {
             userId: recipient.userId,
+            phone: recipient.phone,
             name: recipient.name,
             role: recipient.role
           },
-          status: 'queued'
+          providerMessageId: result.providerMessageId,
+          status: result.status,
+          sentAt: new Date(),
+          response: result.response
         });
-        usedChannels.push('push');
-        deliveryLogs.push(pushLog);
-        console.log(`[NotificationService] Push queued for ${recipient.name}`);
-      } catch (pushError) {
-        console.error('[NotificationService] Push queue failed:', pushError.message);
+        deliveryLogs.push(smsLog);
+        notification.deliverySummary.sent++;
+      } catch (smsError) {
+        console.error('[NotificationService] SMS delivery failed:', smsError.message);
         notification.deliverySummary.failed++;
+        
+        await DeliveryLog.create({
+          notificationId: notification._id,
+          tenantId: schoolId,
+          school: schoolId,
+          branch: branchId || recipient.branchId,
+          channel: 'sms',
+          to: {
+            userId: recipient.userId,
+            phone: recipient.phone,
+            name: recipient.name,
+            role: recipient.role
+          },
+          status: 'failed',
+          failedAt: new Date(),
+          lastError: smsError.message
+        });
       }
     }
 

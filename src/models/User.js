@@ -135,6 +135,20 @@ const userSchema = new mongoose.Schema(
       lastUsed: Date,
       ip: String
     }],
+    // Push notification tokens
+    fcmTokens: [{ 
+      token: String, 
+      deviceId: String, 
+      platform: String, // 'android', 'ios', 'web'
+      active: { type: Boolean, default: true },
+      createdAt: { type: Date, default: Date.now }
+    }],
+    oneSignalPlayerIds: [{ 
+      playerId: String, 
+      deviceId: String,
+      active: { type: Boolean, default: true },
+      createdAt: { type: Date, default: Date.now }
+    }],
     
     // Audit Information
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

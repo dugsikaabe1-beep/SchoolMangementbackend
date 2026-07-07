@@ -2,6 +2,7 @@ import express from 'express';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { protect, checkPermission } from '../middlewares/authMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { broadcastNotification, sendNotification } from '../utils/notificationService.js';
 import NotificationTemplate from '../models/NotificationTemplate.js';
 import NotificationTemplateTranslation from '../models/NotificationTemplateTranslation.js';
@@ -11,7 +12,7 @@ import fcmProvider from '../services/providers/fcmProvider.js';
 
 const router = express.Router();
 
-router.use(protect);
+router.use(asyncHandler(protect));
 
 const adminRoles = ['schooladmin', 'school_admin', 'admin', 'branchmanager', 'branch_manager'];
 
@@ -60,308 +61,378 @@ const requireNotificationManager = [
 /**
  * Get all notifications for current user
  */
-router.get('/', async (req, res) => {
-  try {
-    const notifications = await Notification.find({ 
-      recipient: req.user._id,
-      status: { $ne: 'archived' }
-    }).sort({ createdAt: -1 }).limit(50);
+router.get('/', asyncHandler(async (req, res) => {
+  const notifications = await Notification.find({ 
+    recipient: req.user._id,
+    status: { $ne: 'archived' }
+  }).sort({ createdAt: -1 }).limit(50);
 
-    res.json({ success: true, data: notifications });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  res.json({ success: true, data: notifications });
+}));
 
 /**
  * Notification history for school admins.
  */
-router.get('/history', requireNotificationManager, async (req, res) => {
-  try {
-    const query = {
-      school: getSchoolId(req),
-      status: { $ne: 'archived' },
-    };
+router.get('/history', requireNotificationManager, asyncHandler(async (req, res) => {
+  const query = {
+    school: getSchoolId(req),
+    status: { $ne: 'archived' },
+  };
 
-    if (req.user?.branchScope !== 'ALL_BRANCHES' && getBranchId(req)) {
-      query.branch = getBranchId(req);
-    }
-
-    const notifications = await Notification.find(query)
-      .populate('recipient', 'name role email phone customId')
-      .sort({ createdAt: -1 })
-      .limit(200);
-
-    res.json({ success: true, data: notifications });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (req.user?.branchScope !== 'ALL_BRANCHES' && getBranchId(req)) {
+    query.branch = getBranchId(req);
   }
-});
+
+  const notifications = await Notification.find(query)
+    .populate('recipient', 'name role email phone customId')
+    .sort({ createdAt: -1 })
+    .limit(200);
+
+  res.json({ success: true, data: notifications });
+}));
 
 /**
  * Recipient list for composing notifications.
  */
-router.get('/recipients', requireNotificationManager, async (req, res) => {
-  try {
-    const query = buildRecipientQuery(req, req.query.role || 'all');
-    const recipients = await User.find(query)
-      .select('name role email phone customId branch')
-      .sort({ role: 1, name: 1 })
-      .limit(500);
+router.get('/recipients', requireNotificationManager, asyncHandler(async (req, res) => {
+  const query = buildRecipientQuery(req, req.query.role || 'all');
+  const recipients = await User.find(query)
+    .select('name role email phone customId branch')
+    .sort({ role: 1, name: 1 })
+    .limit(500);
 
-    res.json({ success: true, data: recipients });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  res.json({ success: true, data: recipients });
+}));
 
 /**
  * Create and send a notification to one or more users.
  */
-router.post('/', requireNotificationManager, async (req, res) => {
-  try {
-    const {
+router.post('/', requireNotificationManager, asyncHandler(async (req, res) => {
+  const {
+    title,
+    message,
+    templateCode = null,
+    templateId = null,
+    language = 'en',
+    type = 'info',
+    priority = 'normal',
+    actionLink = '',
+    audience = 'all',
+    recipientIds = [],
+    channels = ['in_app'],
+    sendAt = null,
+    recurrence = null,
+  } = req.body;
+
+  if (!templateCode && (!title || !message)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Title and message are required when no templateCode provided',
+      userMessage: 'Please enter a title and message or provide a template code.',
+    });
+  }
+
+  const selectedChannels = normalizeChannels(channels);
+  const recipients = await User.find(buildRecipientQuery(req, audience, recipientIds))
+    .select('name email phone metadata branch')
+    .limit(1000);
+
+  if (!recipients.length) {
+    return res.status(400).json({
+      success: false,
+      message: 'No recipients found',
+      userMessage: 'No matching recipients were found for this notification.',
+    });
+  }
+
+  const schoolId = getSchoolId(req);
+  const fallbackBranchId = getBranchId(req);
+  const shouldBroadcastInApp = selectedChannels.length === 1 && selectedChannels[0] === 'in_app' && recipients.length > 1;
+
+  // If templateCode provided, load template and translations
+  let template = null;
+  let templateTranslation = null;
+  if (templateId) {
+    template = await NotificationTemplate.findById(templateId);
+  } else if (templateCode) {
+    template = await NotificationTemplate.findOne({ school: schoolId, code: templateCode }) || await NotificationTemplate.findOne({ code: templateCode, isSystem: true });
+  }
+  if (template) {
+    templateTranslation = await NotificationTemplateTranslation.findOne({ templateId: template._id, language }) || null;
+  }
+
+  // Support frontend `scheduledAt` as alias for sendAt
+  const scheduledAt = req.body.scheduledAt || sendAt || null;
+
+  // Scheduling support: if scheduledAt provided and in the future, persist notification and scheduled job
+  if (scheduledAt && new Date(scheduledAt) > new Date()) {
+    // Persist notification with scheduling info and recipients (store some contact info for scheduler)
+    const notif = await Notification.create({
+      recipients: recipients.map(r => ({ kind: 'user', id: r._id, phone: r.phone, email: r.email })),
+      tenantId: schoolId,
+      school: schoolId,
+      branch: fallbackBranchId,
       title,
       message,
-      templateCode = null,
-      templateId = null,
-      language = 'en',
-      type = 'info',
-      priority = 'normal',
-      actionLink = '',
-      audience = 'all',
-      recipientIds = [],
-      channels = ['in_app'],
-      sendAt = null,
-      recurrence = null,
-    } = req.body;
+      messageType: type,
+      priority,
+      channels: selectedChannels,
+      scheduling: { sendAt: new Date(scheduledAt), timezone: req.body.timezone || 'UTC', recurring: recurrence || null },
+      status: 'created',
+      createdBy: req.user._id
+    });
 
-    if (!templateCode && (!title || !message)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Title and message are required when no templateCode provided',
-        userMessage: 'Please enter a title and message or provide a template code.',
-      });
-    }
+    // Create scheduled job
+    const ScheduledJob = (await import('../models/ScheduledJob.js')).default;
+    await ScheduledJob.create({ notificationId: notif._id, tenantId: schoolId, school: schoolId, nextRunAt: new Date(scheduledAt), recurrenceRule: recurrence || null, timezone: req.body.timezone || 'UTC' });
 
-    const selectedChannels = normalizeChannels(channels);
-    const recipients = await User.find(buildRecipientQuery(req, audience, recipientIds))
-      .select('name email phone metadata branch')
-      .limit(1000);
+    return res.status(201).json({ success: true, message: 'Notification scheduled', data: { notificationId: notif._id } });
+  }
 
-    if (!recipients.length) {
-      return res.status(400).json({
-        success: false,
-        message: 'No recipients found',
-        userMessage: 'No matching recipients were found for this notification.',
-      });
-    }
-
-    const schoolId = getSchoolId(req);
-    const fallbackBranchId = getBranchId(req);
-    const shouldBroadcastInApp = selectedChannels.length === 1 && selectedChannels[0] === 'in_app' && recipients.length > 1;
-
-      // If templateCode provided, load template and translations
-      let template = null;
-      let templateTranslation = null;
-      if (templateId) {
-        template = await NotificationTemplate.findById(templateId);
-      } else if (templateCode) {
-        template = await NotificationTemplate.findOne({ school: schoolId, code: templateCode }) || await NotificationTemplate.findOne({ code: templateCode, isSystem: true });
-      }
+  let sent = [];
+  if (shouldBroadcastInApp) {
+    sent = await broadcastNotification({
+      recipientIds: recipients.map((recipient) => recipient._id),
+      schoolId,
+      branchId: fallbackBranchId,
+      title,
+      message,
+      type,
+      priority,
+      channels: selectedChannels,
+      actionLink,
+    }) || [];
+  } else {
+    sent = await Promise.all(recipients.map((recipient) => {
+      // Prepare message using template if available
+      let useTitle = title;
+      let useMessage = message;
       if (template) {
-        templateTranslation = await NotificationTemplateTranslation.findOne({ templateId: template._id, language }) || null;
+        const tplSubj = templateTranslation?.subject || template.subject;
+        const tplBody = templateTranslation?.body || template.body;
+        const data = { user: recipient, recipient, school: { id: schoolId } };
+        useTitle = renderTemplate(tplSubj, data);
+        useMessage = renderTemplate(tplBody, data);
       }
 
-    // Support frontend `scheduledAt` as alias for sendAt
-    const scheduledAt = req.body.scheduledAt || sendAt || null;
-
-    // Scheduling support: if scheduledAt provided and in the future, persist notification and scheduled job
-    if (scheduledAt && new Date(scheduledAt) > new Date()) {
-      // Persist notification with scheduling info and recipients (store some contact info for scheduler)
-      const notif = await Notification.create({
-        recipients: recipients.map(r => ({ kind: 'user', id: r._id, phone: r.phone, email: r.email })),
-        tenantId: schoolId,
-        school: schoolId,
-        branch: fallbackBranchId,
-        title,
-        message,
-        messageType: type,
-        priority,
-        channels: selectedChannels,
-        scheduling: { sendAt: new Date(scheduledAt), timezone: req.body.timezone || 'UTC', recurring: recurrence || null },
-        status: 'created',
-        createdBy: req.user._id
-      });
-
-      // Create scheduled job
-      const ScheduledJob = (await import('../models/ScheduledJob.js')).default;
-      await ScheduledJob.create({ notificationId: notif._id, tenantId: schoolId, school: schoolId, nextRunAt: new Date(scheduledAt), recurrenceRule: recurrence || null, timezone: req.body.timezone || 'UTC' });
-
-      return res.status(201).json({ success: true, message: 'Notification scheduled', data: { notificationId: notif._id } });
-    }
-
-    let sent = [];
-    if (shouldBroadcastInApp) {
-      sent = await broadcastNotification({
-        recipientIds: recipients.map((recipient) => recipient._id),
+      return sendNotification({
+        recipientId: recipient._id,
         schoolId,
-        branchId: fallbackBranchId,
-        title,
-        message,
+        branchId: recipient.branch || fallbackBranchId,
+        title: useTitle,
+        message: useMessage,
         type,
         priority,
-        channels: selectedChannels,
         actionLink,
-      }) || [];
-    } else {
-      sent = await Promise.all(recipients.map((recipient) => {
-        // Prepare message using template if available
-        let useTitle = title;
-        let useMessage = message;
-        if (template) {
-          const tplSubj = templateTranslation?.subject || template.subject;
-          const tplBody = templateTranslation?.body || template.body;
-          const data = { user: recipient, recipient, school: { id: schoolId } };
-          useTitle = renderTemplate(tplSubj, data);
-          useMessage = renderTemplate(tplBody, data);
-        }
-
-        return sendNotification({
-          recipientId: recipient._id,
-          schoolId,
-          branchId: recipient.branch || fallbackBranchId,
-          title: useTitle,
-          message: useMessage,
-          type,
-          priority,
-          actionLink,
-          metadata: { createdBy: req.user._id, audience },
-          emailData: selectedChannels.includes('email') && recipient.email ? {
-            to: recipient.email,
-            subject: useTitle,
-            html: `<p>${useMessage}</p>`,
-          } : null,
-          pushData: selectedChannels.includes('push') ? {
-            token: recipient.metadata?.pushToken || recipient.metadata?.expoPushToken,
-            data: { title, message, actionLink },
-          } : null,
-        });
-      }));
-    }
-
-    res.status(201).json({
-      success: true,
-      data: {
-        requested: recipients.length,
-        sent: sent.filter(Boolean).length,
-        channels: selectedChannels,
-      },
-      message: 'Notification sent',
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+        metadata: { createdBy: req.user._id, audience },
+        emailData: selectedChannels.includes('email') && recipient.email ? {
+          to: recipient.email,
+          subject: useTitle,
+          html: `<p>${useMessage}</p>`,
+        } : null,
+        pushData: selectedChannels.includes('push') ? {
+          token: recipient.metadata?.pushToken || recipient.metadata?.expoPushToken,
+          data: { title, message, actionLink },
+        } : null,
+      });
+    }));
   }
-});
+
+  res.status(201).json({
+    success: true,
+    data: {
+      requested: recipients.length,
+      sent: sent.filter(Boolean).length,
+      channels: selectedChannels,
+    },
+    message: 'Notification sent',
+  });
+}));
 
 /**
  * Admin test route to send an immediate test message via provider (Push only)
  */
-router.post('/test', requireNotificationManager, async (req, res) => {
-  try {
-    const { channel, to, message, title } = req.body || {};
-    if (!channel || !to) return res.status(400).json({ success: false, message: 'channel and to are required' });
+router.post('/test', requireNotificationManager, asyncHandler(async (req, res) => {
+  const { channel, to, message, title } = req.body || {};
+  if (!channel || !to) return res.status(400).json({ success: false, message: 'channel and to are required' });
 
-    const schoolId = getSchoolId(req);
-    const providerConfig = await resolveProvider({ tenantId: req.schoolId, schoolId, channel });
+  const schoolId = getSchoolId(req);
+  const providerConfig = await resolveProvider({ tenantId: req.schoolId, schoolId, channel });
 
-    if (channel === 'push') {
-      // 'to' should be a device token
-      if (!process.env.FCM_SERVER_KEY && !(providerConfig && providerConfig.config)) {
-        return res.status(400).json({ success: false, message: 'FCM not configured' });
-      }
-      const result = await fcmProvider.sendPush({ token: to, title: title || 'Test Push', body: message || 'Test notification', data: { _providerConfig: providerConfig?.config || {} } });
-      return res.json({ success: true, provider: providerConfig?.providerKey || 'fcm', result });
+  if (channel === 'push') {
+    // 'to' should be a device token
+    if (!process.env.FCM_SERVER_KEY && !(providerConfig && providerConfig.config)) {
+      return res.status(400).json({ success: false, message: 'FCM not configured' });
     }
-
-    return res.status(400).json({ success: false, message: 'Unsupported channel' });
-  } catch (error) {
-    console.error('[NotificationRoutes] test send error:', error.message);
-    res.status(500).json({ success: false, message: error.message });
+    const result = await fcmProvider.sendPush({ token: to, title: title || 'Test Push', body: message || 'Test notification', data: { _providerConfig: providerConfig?.config || {} } });
+    return res.json({ success: true, provider: providerConfig?.providerKey || 'fcm', result });
   }
-});
+
+  return res.status(400).json({ success: false, message: 'Unsupported channel' });
+}));
 
 /**
  * Get unread count
  */
-router.get('/unread-count', async (req, res) => {
-  try {
-    const count = await Notification.countDocuments({
-      recipient: req.user._id,
-      status: 'unread'
-    });
-    res.json({ success: true, data: count });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+router.get('/unread-count', asyncHandler(async (req, res) => {
+  const count = await Notification.countDocuments({
+    recipient: req.user._id,
+    status: 'unread'
+  });
+  res.json({ success: true, data: count });
+}));
 
 /**
  * Mark all notifications as read
  */
-router.put('/mark-all-read', async (req, res) => {
-  try {
-    const query = adminRoles.includes(req.user?.role)
-      ? { school: getSchoolId(req), status: 'unread' }
-      : { recipient: req.user._id, status: 'unread' };
+router.put('/mark-all-read', asyncHandler(async (req, res) => {
+  const query = adminRoles.includes(req.user?.role)
+    ? { school: getSchoolId(req), status: 'unread' }
+    : { recipient: req.user._id, status: 'unread' };
 
-    if (adminRoles.includes(req.user?.role) && req.user?.branchScope !== 'ALL_BRANCHES' && getBranchId(req)) {
-      query.branch = getBranchId(req);
-    }
-
-    await Notification.updateMany(query, { status: 'read' });
-    res.json({ success: true, message: 'All notifications marked as read' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (adminRoles.includes(req.user?.role) && req.user?.branchScope !== 'ALL_BRANCHES' && getBranchId(req)) {
+    query.branch = getBranchId(req);
   }
-});
+
+  await Notification.updateMany(query, { status: 'read' });
+  res.json({ success: true, message: 'All notifications marked as read' });
+}));
 
 /**
  * Mark notification as read
  */
-router.put('/:id/read', async (req, res) => {
-  try {
-    const query = adminRoles.includes(req.user?.role)
-      ? { _id: req.params.id, school: getSchoolId(req) }
-      : { _id: req.params.id, recipient: req.user._id };
+router.put('/:id/read', asyncHandler(async (req, res) => {
+  const query = adminRoles.includes(req.user?.role)
+    ? { _id: req.params.id, school: getSchoolId(req) }
+    : { _id: req.params.id, recipient: req.user._id };
 
-    await Notification.findOneAndUpdate(
-      query,
-      { status: 'read' }
-    );
-    res.json({ success: true, message: 'Notification marked as read' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  await Notification.findOneAndUpdate(
+    query,
+    { status: 'read' }
+  );
+  res.json({ success: true, message: 'Notification marked as read' });
+}));
 
 /**
  * Archive/Delete notification
  */
-router.delete('/:id', async (req, res) => {
-  try {
-    const query = adminRoles.includes(req.user?.role)
-      ? { _id: req.params.id, school: getSchoolId(req) }
-      : { _id: req.params.id, recipient: req.user._id };
+router.delete('/:id', asyncHandler(async (req, res) => {
+  const query = adminRoles.includes(req.user?.role)
+    ? { _id: req.params.id, school: getSchoolId(req) }
+    : { _id: req.params.id, recipient: req.user._id };
 
-    await Notification.findOneAndUpdate(
-      query,
-      { status: 'archived' }
-    );
-    res.json({ success: true, message: 'Notification archived' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  await Notification.findOneAndUpdate(
+    query,
+    { status: 'archived' }
+  );
+  res.json({ success: true, message: 'Notification archived' });
+}));
+
+// FCM Token Management
+router.post('/fcm-tokens', asyncHandler(async (req, res) => {
+  const { token, deviceId, platform } = req.body;
+  if (!token) {
+    return res.status(400).json({ success: false, message: 'Token is required' });
   }
-});
+
+  // Remove existing tokens with the same token or deviceId
+  await User.updateOne(
+    { _id: req.user._id },
+    { 
+      $pull: { 
+        fcmTokens: { 
+          $or: [
+            { token: token },
+            { deviceId: deviceId || null }
+          ] 
+        } 
+      } 
+    }
+  );
+
+  // Add new token
+  await User.updateOne(
+    { _id: req.user._id },
+    { 
+      $push: { 
+        fcmTokens: { 
+          token: token, 
+          deviceId: deviceId || null, 
+          platform: platform || 'web' 
+        } 
+      } 
+    }
+  );
+
+  res.json({ success: true, message: 'FCM token saved' });
+}));
+
+router.delete('/fcm-tokens', asyncHandler(async (req, res) => {
+  const { token, deviceId } = req.body;
+  
+  const query = {};
+  if (token) query.token = token;
+  if (deviceId) query.deviceId = deviceId;
+  
+  await User.updateOne(
+    { _id: req.user._id },
+    { $pull: { fcmTokens: query } }
+  );
+
+  res.json({ success: true, message: 'FCM token removed' });
+}));
+
+// OneSignal Player ID Management
+router.post('/onesignal-player-ids', asyncHandler(async (req, res) => {
+  const { playerId, deviceId } = req.body;
+  if (!playerId) {
+    return res.status(400).json({ success: false, message: 'Player ID is required' });
+  }
+
+  // Remove existing player IDs with the same playerId or deviceId
+  await User.updateOne(
+    { _id: req.user._id },
+    { 
+      $pull: { 
+        oneSignalPlayerIds: { 
+          $or: [
+            { playerId: playerId },
+            { deviceId: deviceId || null }
+          ] 
+        } 
+      } 
+    }
+  );
+
+  // Add new player ID
+  await User.updateOne(
+    { _id: req.user._id },
+    { 
+      $push: { 
+        oneSignalPlayerIds: { 
+          playerId: playerId, 
+          deviceId: deviceId || null 
+        } 
+      } 
+    }
+  );
+
+  res.json({ success: true, message: 'OneSignal Player ID saved' });
+}));
+
+router.delete('/onesignal-player-ids', asyncHandler(async (req, res) => {
+  const { playerId, deviceId } = req.body;
+  
+  const query = {};
+  if (playerId) query.playerId = playerId;
+  if (deviceId) query.deviceId = deviceId;
+  
+  await User.updateOne(
+    { _id: req.user._id },
+    { $pull: { oneSignalPlayerIds: query } }
+  );
+
+  res.json({ success: true, message: 'OneSignal Player ID removed' });
+}));
 
 export default router;
