@@ -5,6 +5,7 @@ const idCardSchema = new mongoose.Schema(
   {
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', index: true },
+    academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     type: { type: String, enum: ['student', 'teacher', 'staff'], required: true, default: 'student' },
     

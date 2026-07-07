@@ -27,47 +27,48 @@ import {
 import { protect, allowTeacher } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
 import { injectOwnership } from '../middlewares/tenantMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(protect);
+router.use(asyncHandler(protect));
 router.use(allowTeacher);
 router.use(injectOwnership);
-router.use(branchIsolation);
+router.use(asyncHandler(branchIsolation));
 
 // Read-only routes (no subscription check needed)
-router.get('/dashboard-stats', getTeacherDashboardStats);
-router.get('/assigned-classes', getAssignedClasses);
-router.get('/schedule', getTeacherSchedule);
-router.get('/classes', getAssignedClasses); // Alias for requested /api/teacher/classes
-router.get('/taught-subjects', getTaughtSubjects);
-router.get('/class-students/:classId', getStudentsInClass);
-router.get('/exams', getExams);
-router.get('/class-attendance/:classId/:date', getClassAttendance);
-router.get('/class-attendance/:classId/:date/:subjectId', getClassAttendance);
-router.get('/class-subject-marks/:classId/:subjectId', getClassSubjectMarks);
+router.get('/dashboard-stats', asyncHandler(getTeacherDashboardStats));
+router.get('/assigned-classes', asyncHandler(getAssignedClasses));
+router.get('/schedule', asyncHandler(getTeacherSchedule));
+router.get('/classes', asyncHandler(getAssignedClasses)); // Alias for requested /api/teacher/classes
+router.get('/taught-subjects', asyncHandler(getTaughtSubjects));
+router.get('/class-students/:classId', asyncHandler(getStudentsInClass));
+router.get('/exams', asyncHandler(getExams));
+router.get('/class-attendance/:classId/:date', asyncHandler(getClassAttendance));
+router.get('/class-attendance/:classId/:date/:subjectId', asyncHandler(getClassAttendance));
+router.get('/class-subject-marks/:classId/:subjectId', asyncHandler(getClassSubjectMarks));
 
 // Student Search & Results (read-only)
-router.get('/student-profile/:customId', getStudentProfile);
-router.get('/class-results/:classId/:examName', getClassResults);
+router.get('/student-profile/:customId', asyncHandler(getStudentProfile));
+router.get('/class-results/:classId/:examName', asyncHandler(getClassResults));
 
 // Write operations - Block if subscription expired or school blocked
-router.post('/request-exam', checkSubscription, requestExam);
-router.put('/exams/:examId/present', checkSubscription, markExamAsPresent);
-router.post('/take-attendance', checkSubscription, takeAttendance);
-router.post('/attendance', checkSubscription, takeAttendance); // Alias for requested /api/teacher/attendance
-router.post('/submit-marks', checkSubscription, submitMarks);
-router.post('/marks', checkSubscription, submitMarks); // Alias for requested /api/teacher/marks
-router.post('/bulk-submit-marks', checkSubscription, bulkSubmitMarks);
+router.post('/request-exam', checkSubscription, asyncHandler(requestExam));
+router.put('/exams/:examId/present', checkSubscription, asyncHandler(markExamAsPresent));
+router.post('/take-attendance', checkSubscription, asyncHandler(takeAttendance));
+router.post('/attendance', checkSubscription, asyncHandler(takeAttendance)); // Alias for requested /api/teacher/attendance
+router.post('/submit-marks', checkSubscription, asyncHandler(submitMarks));
+router.post('/marks', checkSubscription, asyncHandler(submitMarks)); // Alias for requested /api/teacher/marks
+router.post('/bulk-submit-marks', checkSubscription, asyncHandler(bulkSubmitMarks));
 
 // Exam Hall Routes
 router.use('/exam-halls', checkModuleAccess('exam-halls'));
-router.get('/exam-halls', getExamHalls);
-router.get('/exam-halls/:id', getExamHallById);
-router.post('/exam-halls/temporary-clearance', checkSubscription, grantTemporaryClearance);
-router.post('/exam-halls/revoke-clearance', checkSubscription, revokeTemporaryClearance);
+router.get('/exam-halls', asyncHandler(getExamHalls));
+router.get('/exam-halls/:id', asyncHandler(getExamHallById));
+router.post('/exam-halls/temporary-clearance', checkSubscription, asyncHandler(grantTemporaryClearance));
+router.post('/exam-halls/revoke-clearance', checkSubscription, asyncHandler(revokeTemporaryClearance));
 
 export default router;

@@ -22,6 +22,7 @@ import {
   unregisterDevice,
 } from '../controllers/authController.js';
 import { protect, authorizeRoles } from '../middlewares/authMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
 import {
   validate,
   adminLoginBodySchema,
@@ -32,38 +33,38 @@ import { rateLimitResendVerification } from '../middlewares/rateLimiter.js';
 
 const router = express.Router();
 
-router.get('/tenant', getTenantInfo);
+router.get('/tenant', asyncHandler(getTenantInfo));
 
-router.post('/refresh', refreshAccessToken);
-router.post('/logout', protect, logout);
+router.post('/refresh', asyncHandler(refreshAccessToken));
+router.post('/logout', protect, asyncHandler(logout));
 
-router.post('/verify-2fa', verify2FA);
-router.post('/resend-2fa', resend2FA);
+router.post('/verify-2fa', asyncHandler(verify2FA));
+router.post('/resend-2fa', asyncHandler(resend2FA));
 
-router.post('/verify-email', verifyEmail);
-router.post('/resend-verification', rateLimitResendVerification, resendVerification);
+router.post('/verify-email', asyncHandler(verifyEmail));
+router.post('/resend-verification', rateLimitResendVerification, asyncHandler(resendVerification));
 
-router.post('/test-email', testEmail);
+router.post('/test-email', asyncHandler(testEmail));
 
-router.post('/login', validate(schoolScopedLoginSchema), login);
-router.post('/student-login', validate(credLoginSchema), studentLogin);
-router.post('/teacher-login', validate(credLoginSchema), teacherLogin);
-router.post('/parent-login', validate(credLoginSchema), parentLogin);
-router.post('/admin-login', validate(adminLoginBodySchema), adminLogin);
-router.post('/branch-login', validate(adminLoginBodySchema), branchLogin);
+router.post('/login', validate(schoolScopedLoginSchema), asyncHandler(login));
+router.post('/student-login', validate(credLoginSchema), asyncHandler(studentLogin));
+router.post('/teacher-login', validate(credLoginSchema), asyncHandler(teacherLogin));
+router.post('/parent-login', validate(credLoginSchema), asyncHandler(parentLogin));
+router.post('/admin-login', validate(adminLoginBodySchema), asyncHandler(adminLogin));
+router.post('/branch-login', validate(adminLoginBodySchema), asyncHandler(branchLogin));
 
 router.post(
   '/register',
   protect,
   authorizeRoles('admin', 'schooladmin', 'school_admin'),
-  register
+  asyncHandler(register)
 );
-router.get('/profile', protect, getProfile);
-router.put('/preferences', protect, updatePreferences);
-router.put('/reset-password', protect, resetPassword);
+router.get('/profile', protect, asyncHandler(getProfile));
+router.put('/preferences', protect, asyncHandler(updatePreferences));
+router.put('/reset-password', protect, asyncHandler(resetPassword));
 
 // Device registration for push notifications
-router.post('/profile/device', protect, registerDevice);
-router.delete('/profile/device', protect, unregisterDevice);
+router.post('/profile/device', protect, asyncHandler(registerDevice));
+router.delete('/profile/device', protect, asyncHandler(unregisterDevice));
 
 export default router;

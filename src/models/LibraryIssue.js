@@ -4,6 +4,7 @@ const libraryIssueSchema = new mongoose.Schema(
   {
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     book: { type: mongoose.Schema.Types.ObjectId, ref: 'LibraryBook', required: true, index: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true }, // Borrower
     issueDate: { type: Date, default: Date.now },

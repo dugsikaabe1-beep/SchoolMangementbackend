@@ -3,7 +3,9 @@ import mongoose from 'mongoose';
 const auditLogSchema = new mongoose.Schema(
   {
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'School', index: true },
+    schoolId: { type: mongoose.Schema.Types.ObjectId, ref: 'School', index: true },
     branchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', index: true },
+    academicYearId: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', index: true },
     actorUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
     action: { type: String, required: true, index: true }, // e.g., "STUDENT_CREATE", "PAYMENT_MARK_PAID"
     targetType: { type: String }, // e.g., "Student", "Payment"

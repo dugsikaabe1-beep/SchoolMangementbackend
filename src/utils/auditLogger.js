@@ -14,7 +14,9 @@ export const logAction = (req, { action, module, details, targetId, oldValue, ne
 
       await AuditLog.create({
         tenantId: req?.schoolId || req?.user?.school?._id || req?.user?.school || details?.school,
+        schoolId: req?.schoolId || req?.user?.school?._id || req?.user?.school || details?.school,
         branchId: req?.branchId || req?.user?.branch?._id || req?.user?.branch || details?.branch,
+        academicYearId: req?.academicYearId || details?.academicYearId,
         actorUserId: req?.user?._id || details?.actorUserId,
         action,
         targetType: module,

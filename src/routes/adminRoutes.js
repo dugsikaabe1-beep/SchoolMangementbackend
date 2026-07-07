@@ -162,6 +162,7 @@ import {
   authorizeRoles,
   checkPermission 
 } from '../middlewares/authMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
 import { injectOwnership } from '../middlewares/tenantMiddleware.js';
@@ -174,19 +175,19 @@ import { globalSearch } from '../controllers/searchController.js';
 const router = express.Router();
 
 // Apply auth, ownership, branch isolation and academic year middleware to all routes
-router.use(protect);
+router.use(asyncHandler(protect));
 router.use(injectOwnership);
-router.use(branchIsolation);
-router.use(injectAcademicYear);
+router.use(asyncHandler(branchIsolation));
+router.use(asyncHandler(injectAcademicYear));
 router.use(checkSubscription);
 router.use(auditMiddleware('ADMIN_PANEL'));
 
 // Global Search
-router.get('/search', globalSearch);
+router.get('/search', asyncHandler(globalSearch));
 
 // --- 1. Dashboard Stats ---
-router.get('/dashboard-stats', authorizeRoles('admin', 'schooladmin', 'school_admin'), getDashboardStats);
-router.get('/teacher-dashboard-stats', authorizeRoles('teacher'), getTeacherDashboardStats);
+router.get('/dashboard-stats', authorizeRoles('admin', 'schooladmin', 'school_admin'), asyncHandler(getDashboardStats));
+router.get('/teacher-dashboard-stats', authorizeRoles('teacher'), asyncHandler(getTeacherDashboardStats));
 
 // --- 2. Student Management ---
 router.use('/students', checkModuleAccess('students'));
@@ -194,97 +195,97 @@ router.use('/student-profile', checkModuleAccess('students'));
 router.use('/student-profile-print', checkModuleAccess('students'));
 router.use('/templates/students', checkModuleAccess('students'));
 router.route('/students')
-  .post(checkPermission('students.create'), checkPlanLimits('students'), createStudent)
-  .get(checkPermission('students.view'), getStudents);
+  .post(checkPermission('students.create'), checkPlanLimits('students'), asyncHandler(createStudent))
+  .get(checkPermission('students.view'), asyncHandler(getStudents));
 
 router.route('/students/:id')
-  .put(checkPermission('students.edit'), updateStudent)
-  .delete(checkPermission('students.delete'), deleteStudent);
+  .put(checkPermission('students.edit'), asyncHandler(updateStudent))
+  .delete(checkPermission('students.delete'), asyncHandler(deleteStudent));
 
-router.post('/students/:id/restore', checkPermission('students.edit'), restoreStudent);
+router.post('/students/:id/restore', checkPermission('students.edit'), asyncHandler(restoreStudent));
 
-router.get('/student-profile/:customId', checkPermission('students.view'), getStudentProfile);
-router.get('/student-profile-print/:id', checkPermission('students.view'), getStudentProfileForPrint);
-router.post('/students/transfer', checkPermission('students.edit'), transferStudent);
+router.get('/student-profile/:customId', checkPermission('students.view'), asyncHandler(getStudentProfile));
+router.get('/student-profile-print/:id', checkPermission('students.view'), asyncHandler(getStudentProfileForPrint));
+router.post('/students/transfer', checkPermission('students.edit'), asyncHandler(transferStudent));
 
 // --- Parent Management ---
 router.use('/parents', checkModuleAccess('parents'));
 router.route('/parents')
-  .get(checkPermission('students.view'), getParents)
-  .post(checkPermission('students.create'), createParent);
+  .get(checkPermission('students.view'), asyncHandler(getParents))
+  .post(checkPermission('students.create'), asyncHandler(createParent));
 
 router.route('/parents/:id')
-  .put(checkPermission('students.edit'), updateParent)
-  .delete(checkPermission('students.delete'), deleteParent);
+  .put(checkPermission('students.edit'), asyncHandler(updateParent))
+  .delete(checkPermission('students.delete'), asyncHandler(deleteParent));
 
-router.post('/parents/link', checkPermission('students.edit'), linkParentToStudents);
+router.post('/parents/link', checkPermission('students.edit'), asyncHandler(linkParentToStudents));
 
 // --- 3. Teacher Management ---
 router.use('/teachers', checkModuleAccess('teachers'));
 router.use('/teacher-profile', checkModuleAccess('teachers'));
 router.use('/templates/teachers', checkModuleAccess('teachers'));
 router.route('/teachers')
-  .post(checkPermission('teachers.create'), checkPlanLimits('teachers'), createTeacher)
-  .get(checkPermission('teachers.view'), getTeachers);
+  .post(checkPermission('teachers.create'), checkPlanLimits('teachers'), asyncHandler(createTeacher))
+  .get(checkPermission('teachers.view'), asyncHandler(getTeachers));
 
 router.route('/teachers/:id')
-  .put(checkPermission('teachers.edit'), updateTeacher)
-  .delete(checkPermission('teachers.delete'), deleteTeacher);
+  .put(checkPermission('teachers.edit'), asyncHandler(updateTeacher))
+  .delete(checkPermission('teachers.delete'), asyncHandler(deleteTeacher));
 
-router.post('/teachers/:id/restore', checkPermission('teachers.edit'), restoreTeacher);
+router.post('/teachers/:id/restore', checkPermission('teachers.edit'), asyncHandler(restoreTeacher));
 
-router.get('/teacher-profile/:customId', checkPermission('teachers.view'), getTeacherProfile);
-router.get('/teachers/check-id', checkPermission('teachers.view'), checkTeacherId);
+router.get('/teacher-profile/:customId', checkPermission('teachers.view'), asyncHandler(getTeacherProfile));
+router.get('/teachers/check-id', checkPermission('teachers.view'), asyncHandler(checkTeacherId));
 
 // --- ID Card Users ---
-router.get('/users-for-id-card', checkPermission('students.view'), getUsersForIDCard);
+router.get('/users-for-id-card', checkPermission('students.view'), asyncHandler(getUsersForIDCard));
 
 // --- 4. Class Management ---
 router.use('/classes', checkModuleAccess('classes'));
 router.use('/class-students', checkModuleAccess('classes'));
 router.route('/classes')
-  .post(checkPermission('classes.create'), createClass)
-  .get(checkPermission('classes.view'), getClasses);
+  .post(checkPermission('classes.create'), asyncHandler(createClass))
+  .get(checkPermission('classes.view'), asyncHandler(getClasses));
 
 router.route('/classes/:id')
-  .get(checkPermission('classes.view'), getClassById)
-  .put(checkPermission('classes.edit'), updateClass)
-  .delete(checkPermission('classes.delete'), deleteClass);
+  .get(checkPermission('classes.view'), asyncHandler(getClassById))
+  .put(checkPermission('classes.edit'), asyncHandler(updateClass))
+  .delete(checkPermission('classes.delete'), asyncHandler(deleteClass));
 
-router.get('/class-students/:classId', checkPermission('students.view'), getStudentsInClass);
+router.get('/class-students/:classId', checkPermission('students.view'), asyncHandler(getStudentsInClass));
 
 // --- 5. Subject Management ---
 router.use('/subjects', checkModuleAccess('subjects'));
 router.route('/subjects')
-  .post(checkPermission('subjects.create'), createSubject)
-  .get(checkPermission('subjects.view'), getSubjects);
+  .post(checkPermission('subjects.create'), asyncHandler(createSubject))
+  .get(checkPermission('subjects.view'), asyncHandler(getSubjects));
 
 router.route('/subjects/:id')
-  .put(checkPermission('subjects.edit'), updateSubject)
-  .delete(checkPermission('subjects.delete'), deleteSubject);
+  .put(checkPermission('subjects.edit'), asyncHandler(updateSubject))
+  .delete(checkPermission('subjects.delete'), asyncHandler(deleteSubject));
 
-router.get('/subjects/check-code', checkPermission('subjects.view'), checkSubjectCode);
-router.post('/subjects/assign', checkPermission('subjects.edit'), assignSubjectToClass);
-router.put('/subjects/assign/:id', checkPermission('subjects.edit'), updateClassSubjectAssignment);
-router.delete('/subjects/assign/:id', checkPermission('subjects.edit'), removeClassSubjectAssignment);
+router.get('/subjects/check-code', checkPermission('subjects.view'), asyncHandler(checkSubjectCode));
+router.post('/subjects/assign', checkPermission('subjects.edit'), asyncHandler(assignSubjectToClass));
+router.put('/subjects/assign/:id', checkPermission('subjects.edit'), asyncHandler(updateClassSubjectAssignment));
+router.delete('/subjects/assign/:id', checkPermission('subjects.edit'), asyncHandler(removeClassSubjectAssignment));
 
 // --- 6. Attendance Management ---
 router.use('/attendance', checkModuleAccess('attendance'));
 router.route('/attendance')
-  .post(checkPermission('attendance.create'), takeAttendance)
-  .get(checkPermission('attendance.view'), getAllAttendance);
+  .post(checkPermission('attendance.create'), asyncHandler(takeAttendance))
+  .get(checkPermission('attendance.view'), asyncHandler(getAllAttendance));
 
 router.route('/attendance/:id')
-  .put(checkPermission('attendance.edit'), updateAttendance)
-  .delete(checkPermission('attendance.delete'), deleteAttendance);
+  .put(checkPermission('attendance.edit'), asyncHandler(updateAttendance))
+  .delete(checkPermission('attendance.delete'), asyncHandler(deleteAttendance));
 
 // --- 7. Exam Management ---
 router.use('/exams', checkModuleAccess('exams'));
 router.route('/exams')
-  .post(checkPermission('exams.create'), createExam)
-  .get(checkPermission('exams.view'), getAllExams);
+  .post(checkPermission('exams.create'), asyncHandler(createExam))
+  .get(checkPermission('exams.view'), asyncHandler(getAllExams));
 
-router.post('/exams/:id/publish', checkPermission('exams.edit'), publishExam);
+router.post('/exams/:id/publish', checkPermission('exams.edit'), asyncHandler(publishExam));
 
 // --- 8. Marks Management ---
 router.use('/marks', checkModuleAccess('exams'));
@@ -292,23 +293,23 @@ router.use('/exams/marks', checkModuleAccess('exams'));
 router.use('/exams/bulk-submit', checkModuleAccess('exams'));
 router.use('/class-results', checkModuleAccess('exams'));
 router.use('/student-academic-summary', checkModuleAccess('exams'));
-router.get('/marks', checkPermission('exams.view'), getAllMarks);
-router.get('/exams/marks', checkPermission('exams.view'), getExamMarks);
-router.put('/exams/marks', checkPermission('exams.edit'), updateExamMarks);
-router.post('/exams/bulk-submit', checkPermission('exams.edit'), bulkSubmitMarks);
-router.get('/class-results', checkPermission('exams.view'), getClassResults);
-router.get('/student-academic-summary/:id', checkPermission('exams.view'), getStudentAcademicSummary);
+router.get('/marks', checkPermission('exams.view'), asyncHandler(getAllMarks));
+router.get('/exams/marks', checkPermission('exams.view'), asyncHandler(getExamMarks));
+router.put('/exams/marks', checkPermission('exams.edit'), asyncHandler(updateExamMarks));
+router.post('/exams/bulk-submit', checkPermission('exams.edit'), asyncHandler(bulkSubmitMarks));
+router.get('/class-results', checkPermission('exams.view'), asyncHandler(getClassResults));
+router.get('/student-academic-summary/:id', checkPermission('exams.view'), asyncHandler(getStudentAcademicSummary));
 
 // --- 9. Exam Session Management ---
 router.use('/exam-sessions', checkModuleAccess('exams'));
 router.route('/exam-sessions')
-  .post(checkPermission('exams.create'), createExamSession)
-  .get(checkPermission('exams.view'), getExamSessions);
+  .post(checkPermission('exams.create'), asyncHandler(createExamSession))
+  .get(checkPermission('exams.view'), asyncHandler(getExamSessions));
 
-router.get('/exam-sessions/:id', checkPermission('exams.view'), getExamSessionById);
-router.get('/exam-sessions/:id/marks', checkPermission('exams.view'), getClassExamMarks);
-router.post('/exam-sessions/:id/marks', checkPermission('exams.edit'), submitClassExamMarks);
-router.delete('/exam-sessions/:id/marks/:studentId', checkPermission('exams.delete'), deleteClassExamMarks);
+router.get('/exam-sessions/:id', checkPermission('exams.view'), asyncHandler(getExamSessionById));
+router.get('/exam-sessions/:id/marks', checkPermission('exams.view'), asyncHandler(getClassExamMarks));
+router.post('/exam-sessions/:id/marks', checkPermission('exams.edit'), asyncHandler(submitClassExamMarks));
+router.delete('/exam-sessions/:id/marks/:studentId', checkPermission('exams.delete'), asyncHandler(deleteClassExamMarks));
 
 // --- 10. Payment & Finance Management ---
 router.use('/payment-months', checkModuleAccess('finance'));
@@ -318,159 +319,159 @@ router.use('/generate-monthly-payments', checkModuleAccess('finance'));
 router.use('/payment-stats', checkModuleAccess('finance'));
 router.use('/finance', checkModuleAccess('finance'));
 router.route('/payment-months')
-  .post(checkPermission('finance.manage'), createPaymentMonth)
-  .get(checkPermission('finance.view'), getPaymentMonths);
+  .post(checkPermission('finance.manage'), asyncHandler(createPaymentMonth))
+  .get(checkPermission('finance.view'), asyncHandler(getPaymentMonths));
 
-router.get('/monthly-payments', checkPermission('finance.view'), getMonthlyPayments);
-router.put('/monthly-payments/:id/mark-paid', checkPermission('finance.manage'), markPaymentPaid);
-router.put('/monthly-payments/:id/mark-unpaid', checkPermission('finance.manage'), markPaymentUnpaid);
-router.get('/payment-matrix', checkPermission('finance.view'), getPaymentMatrix);
-router.delete('/payment-months/:id', checkPermission('finance.manage'), deletePaymentMonth);
-router.post('/generate-monthly-payments', checkPermission('finance.manage'), generateMonthlyPaymentsManual);
-router.get('/payment-stats', checkPermission('finance.view'), getPaymentStats);
-router.get('/finance/all-payments', checkPermission('finance.view'), getAllPayments);
+router.get('/monthly-payments', checkPermission('finance.view'), asyncHandler(getMonthlyPayments));
+router.put('/monthly-payments/:id/mark-paid', checkPermission('finance.manage'), asyncHandler(markPaymentPaid));
+router.put('/monthly-payments/:id/mark-unpaid', checkPermission('finance.manage'), asyncHandler(markPaymentUnpaid));
+router.get('/payment-matrix', checkPermission('finance.view'), asyncHandler(getPaymentMatrix));
+router.delete('/payment-months/:id', checkPermission('finance.manage'), asyncHandler(deletePaymentMonth));
+router.post('/generate-monthly-payments', checkPermission('finance.manage'), asyncHandler(generateMonthlyPaymentsManual));
+router.get('/payment-stats', checkPermission('finance.view'), asyncHandler(getPaymentStats));
+router.get('/finance/all-payments', checkPermission('finance.view'), asyncHandler(getAllPayments));
 
 // --- 11. Schedule Management ---
 router.use('/schedules', checkModuleAccess('schedules'));
 router.route('/schedules')
-  .post(checkPermission('schedules.manage'), createSchedule)
-  .get(checkPermission('schedules.view'), getSchedules);
+  .post(checkPermission('schedules.manage'), asyncHandler(createSchedule))
+  .get(checkPermission('schedules.view'), asyncHandler(getSchedules));
 
 router.route('/schedules/:id')
-  .put(checkPermission('schedules.manage'), updateSchedule)
-  .delete(checkPermission('schedules.manage'), deleteSchedule);
+  .put(checkPermission('schedules.manage'), asyncHandler(updateSchedule))
+  .delete(checkPermission('schedules.manage'), asyncHandler(deleteSchedule));
 
 // --- 12. School Settings ---
 router.use('/school-settings', checkModuleAccess('settings'));
 router.route('/school-settings')
-  .get(checkPermission('settings.view'), getSchoolSettings)
-  .put(checkPermission('settings.manage'), updateSchoolSettings);
+  .get(checkPermission('settings.view'), asyncHandler(getSchoolSettings))
+  .put(checkPermission('settings.manage'), asyncHandler(updateSchoolSettings));
 
 // --- Announcements ---
 router.use('/announcements', checkModuleAccess('announcements'));
 router.route('/announcements')
-  .get(checkPermission('settings.view'), getAnnouncements)
-  .post(checkPermission('settings.manage'), createAnnouncement);
+  .get(checkPermission('settings.view'), asyncHandler(getAnnouncements))
+  .post(checkPermission('settings.manage'), asyncHandler(createAnnouncement));
 
 router.route('/announcements/:id')
-  .put(checkPermission('settings.manage'), updateAnnouncement)
-  .delete(checkPermission('settings.manage'), deleteAnnouncement);
+  .put(checkPermission('settings.manage'), asyncHandler(updateAnnouncement))
+  .delete(checkPermission('settings.manage'), asyncHandler(deleteAnnouncement));
 
 // --- 13. Bulk Import Management ---
-router.post('/students/import', checkModuleAccess('students'), checkPermission('students.create'), uploadExcel, importStudents);
-router.post('/exams/import', checkModuleAccess('exams'), checkPermission('exams.create'), uploadExcel, importExamResults);
-router.post('/teachers/import', checkModuleAccess('teachers'), checkPermission('teachers.create'), uploadExcel, importTeachers);
+router.post('/students/import', checkModuleAccess('students'), checkPermission('students.create'), uploadExcel, asyncHandler(importStudents));
+router.post('/exams/import', checkModuleAccess('exams'), checkPermission('exams.create'), uploadExcel, asyncHandler(importExamResults));
+router.post('/teachers/import', checkModuleAccess('teachers'), checkPermission('teachers.create'), uploadExcel, asyncHandler(importTeachers));
 
-router.get('/templates/students', checkPermission('students.create'), downloadStudentTemplate);
-router.get('/templates/exams', checkModuleAccess('exams'), checkPermission('exams.create'), downloadExamTemplate);
-router.get('/templates/teachers', checkPermission('teachers.create'), downloadTeacherTemplate);
+router.get('/templates/students', checkPermission('students.create'), asyncHandler(downloadStudentTemplate));
+router.get('/templates/exams', checkModuleAccess('exams'), checkPermission('exams.create'), asyncHandler(downloadExamTemplate));
+router.get('/templates/teachers', checkPermission('teachers.create'), asyncHandler(downloadTeacherTemplate));
 
-router.post('/students/generate-credentials', checkPermission('students.edit'), generateBulkCredentials);
-router.post('/students/:id/generate-login', checkPermission('students.edit'), generateStudentLogin);
-router.post('/students/credentials/download', checkPermission('students.view'), downloadCredentials);
-router.post('/students/errors/download', checkPermission('students.view'), downloadStudentErrorReport);
-router.post('/exams/errors/download', checkModuleAccess('exams'), checkPermission('exams.view'), downloadExamErrorReport);
-router.post('/teachers/errors/download', checkPermission('teachers.view'), downloadTeacherErrorReport);
+router.post('/students/generate-credentials', checkPermission('students.edit'), asyncHandler(generateBulkCredentials));
+router.post('/students/:id/generate-login', checkPermission('students.edit'), asyncHandler(generateStudentLogin));
+router.post('/students/credentials/download', checkPermission('students.view'), asyncHandler(downloadCredentials));
+router.post('/students/errors/download', checkPermission('students.view'), asyncHandler(downloadStudentErrorReport));
+router.post('/exams/errors/download', checkModuleAccess('exams'), checkPermission('exams.view'), asyncHandler(downloadExamErrorReport));
+router.post('/teachers/errors/download', checkPermission('teachers.view'), asyncHandler(downloadTeacherErrorReport));
 
 // --- 14. Exam Access Requests ---
 router.use('/exam-requests', checkModuleAccess('exams'));
-router.get('/exam-requests', checkPermission('exams.manage'), getExamRequests);
-router.post('/exam-requests/:id/approve', checkPermission('exams.manage'), approveExamRequest);
+router.get('/exam-requests', checkPermission('exams.manage'), asyncHandler(getExamRequests));
+router.post('/exam-requests/:id/approve', checkPermission('exams.manage'), asyncHandler(approveExamRequest));
 
 // --- 15. Password Reset ---
-router.post('/teachers/:id/reset-password', checkPermission('teachers.edit'), resetTeacherPassword);
-router.post('/students/:id/reset-password', checkPermission('students.edit'), resetStudentPassword);
-router.post('/parents/:id/reset-password', checkPermission('students.edit'), resetParentPassword);
+router.post('/teachers/:id/reset-password', checkPermission('teachers.edit'), asyncHandler(resetTeacherPassword));
+router.post('/students/:id/reset-password', checkPermission('students.edit'), asyncHandler(resetStudentPassword));
+router.post('/parents/:id/reset-password', checkPermission('students.edit'), asyncHandler(resetParentPassword));
 
 // --- 16. Enterprise Features ---
-router.post('/certificates/generate', checkModuleAccess('certificates'), generateCertificate);
-router.get('/admissions', checkModuleAccess('admissions'), getAdmissions);
-router.put('/admissions/:id/status', checkModuleAccess('admissions'), updateAdmissionStatus);
-router.post('/students/promote', checkModuleAccess('promotions'), promoteStudents);
-router.get('/calendar-events', checkModuleAccess('academic-calendar'), getCalendarEvents);
-router.post('/calendar-events', checkModuleAccess('academic-calendar'), createCalendarEvent);
-router.get('/analytics/usage', checkModuleAccess('analytics'), getUsageAnalytics);
-router.get('/support/tickets', checkModuleAccess('support'), getSupportTickets);
-router.post('/support/tickets', checkModuleAccess('support'), createSupportTicket);
-router.get('/export', checkModuleAccess('export'), exportData);
+router.post('/certificates/generate', checkModuleAccess('certificates'), asyncHandler(generateCertificate));
+router.get('/admissions', checkModuleAccess('admissions'), asyncHandler(getAdmissions));
+router.put('/admissions/:id/status', checkModuleAccess('admissions'), asyncHandler(updateAdmissionStatus));
+router.post('/students/promote', checkModuleAccess('promotions'), asyncHandler(promoteStudents));
+router.get('/calendar-events', checkModuleAccess('academic-calendar'), asyncHandler(getCalendarEvents));
+router.post('/calendar-events', checkModuleAccess('academic-calendar'), asyncHandler(createCalendarEvent));
+router.get('/analytics/usage', checkModuleAccess('analytics'), asyncHandler(getUsageAnalytics));
+router.get('/support/tickets', checkModuleAccess('support'), asyncHandler(getSupportTickets));
+router.post('/support/tickets', checkModuleAccess('support'), asyncHandler(createSupportTicket));
+router.get('/export', checkModuleAccess('export'), asyncHandler(exportData));
 
 // --- 17. Professional School ERP Expansion ---
 // Fees & Discounts
-router.get('/fee-structures', checkModuleAccess('finance'), getFeeStructures);
-router.post('/fee-structures', checkPermission('finance.manage'), createFeeStructure);
-router.post('/calculate-fee', checkModuleAccess('finance'), calculateStudentFee);
+router.get('/fee-structures', checkModuleAccess('finance'), asyncHandler(getFeeStructures));
+router.post('/fee-structures', checkPermission('finance.manage'), asyncHandler(createFeeStructure));
+router.post('/calculate-fee', checkModuleAccess('finance'), asyncHandler(calculateStudentFee));
 
 // Approval Workflows
-router.post('/approvals/request', requestApproval);
-router.put('/approvals/:id/handle', handleApproval);
+router.post('/approvals/request', asyncHandler(requestApproval));
+router.put('/approvals/:id/handle', asyncHandler(handleApproval));
 
 // Asset Management
-router.get('/assets', checkModuleAccess('assets'), getAssets);
-router.post('/assets', checkPermission('assets.manage'), createAsset);
+router.get('/assets', checkModuleAccess('assets'), asyncHandler(getAssets));
+router.post('/assets', checkPermission('assets.manage'), asyncHandler(createAsset));
 
 // Discounts Management
-router.get('/discounts', checkModuleAccess('discounts'), getDiscounts);
-router.post('/discounts', checkPermission('finance.manage'), createDiscount);
-router.put('/discounts/:id', checkPermission('finance.manage'), updateDiscount);
-router.get('/discount-assignments', checkModuleAccess('discounts'), getDiscountAssignments);
-router.post('/discount-assignments', checkPermission('finance.manage'), assignDiscount);
-router.put('/discount-assignments/:id', checkPermission('finance.manage'), updateDiscountAssignment);
-router.delete('/discount-assignments/:id', checkPermission('finance.manage'), removeDiscountAssignment);
-router.get('/discount-reports', checkPermission('finance.view'), getDiscountReports);
+router.get('/discounts', checkModuleAccess('discounts'), asyncHandler(getDiscounts));
+router.post('/discounts', checkPermission('finance.manage'), asyncHandler(createDiscount));
+router.put('/discounts/:id', checkPermission('finance.manage'), asyncHandler(updateDiscount));
+router.get('/discount-assignments', checkModuleAccess('discounts'), asyncHandler(getDiscountAssignments));
+router.post('/discount-assignments', checkPermission('finance.manage'), asyncHandler(assignDiscount));
+router.put('/discount-assignments/:id', checkPermission('finance.manage'), asyncHandler(updateDiscountAssignment));
+router.delete('/discount-assignments/:id', checkPermission('finance.manage'), asyncHandler(removeDiscountAssignment));
+router.get('/discount-reports', checkPermission('finance.view'), asyncHandler(getDiscountReports));
 
 // Library Management
-router.get('/library/books', checkModuleAccess('library'), getLibraryBooks);
-router.post('/library/books', checkPermission('library.manage'), createLibraryBook);
-router.post('/library/issues', checkPermission('library.manage'), issueLibraryBook);
-router.put('/library/issues/:id/return', checkPermission('library.manage'), returnLibraryBook);
+router.get('/library/books', checkModuleAccess('library'), asyncHandler(getLibraryBooks));
+router.post('/library/books', checkPermission('library.manage'), asyncHandler(createLibraryBook));
+router.post('/library/issues', checkPermission('library.manage'), asyncHandler(issueLibraryBook));
+router.put('/library/issues/:id/return', checkPermission('library.manage'), asyncHandler(returnLibraryBook));
 
 // Transport Management
-router.get('/transport/routes', checkModuleAccess('transport'), getTransportRoutes);
-router.post('/transport/routes', checkPermission('transport.manage'), createTransportRoute);
-router.get('/transport/vehicles', checkModuleAccess('transport'), getTransportVehicles);
-router.post('/transport/vehicles', checkPermission('transport.manage'), createTransportVehicle);
+router.get('/transport/routes', checkModuleAccess('transport'), asyncHandler(getTransportRoutes));
+router.post('/transport/routes', checkPermission('transport.manage'), asyncHandler(createTransportRoute));
+router.get('/transport/vehicles', checkModuleAccess('transport'), asyncHandler(getTransportVehicles));
+router.post('/transport/vehicles', checkPermission('transport.manage'), asyncHandler(createTransportVehicle));
 
 // Security & Sessions
-router.get('/security/sessions', getActiveSessions);
-router.delete('/security/sessions/:sessionId', revokeSession);
+router.get('/security/sessions', asyncHandler(getActiveSessions));
+router.delete('/security/sessions/:sessionId', asyncHandler(revokeSession));
 
 // Asset CRUD additions
 router.route('/assets/:id')
-  .put(checkPermission('assets.manage'), updateAsset)
-  .delete(checkPermission('assets.manage'), deleteAsset);
+  .put(checkPermission('assets.manage'), asyncHandler(updateAsset))
+  .delete(checkPermission('assets.manage'), asyncHandler(deleteAsset));
 
 // Library CRUD additions
 router.route('/library/books/:id')
-  .put(checkPermission('library.manage'), updateLibraryBook)
-  .delete(checkPermission('library.manage'), deleteLibraryBook);
+  .put(checkPermission('library.manage'), asyncHandler(updateLibraryBook))
+  .delete(checkPermission('library.manage'), asyncHandler(deleteLibraryBook));
 
 // Transport CRUD additions
 router.route('/transport/routes/:id')
-  .put(checkPermission('transport.manage'), updateTransportRoute)
-  .delete(checkPermission('transport.manage'), deleteTransportRoute);
+  .put(checkPermission('transport.manage'), asyncHandler(updateTransportRoute))
+  .delete(checkPermission('transport.manage'), asyncHandler(deleteTransportRoute));
 
 router.route('/transport/vehicles/:id')
-  .put(checkPermission('transport.manage'), updateTransportVehicle)
-  .delete(checkPermission('transport.manage'), deleteTransportVehicle);
+  .put(checkPermission('transport.manage'), asyncHandler(updateTransportVehicle))
+  .delete(checkPermission('transport.manage'), asyncHandler(deleteTransportVehicle));
 
 // Certificate CRUD additions
-router.get('/certificates', checkModuleAccess('certificates'), getCertificates);
-router.put('/certificates/:id', checkModuleAccess('certificates'), updateCertificate);
-router.delete('/certificates/:id', checkModuleAccess('certificates'), deleteCertificate);
+router.get('/certificates', checkModuleAccess('certificates'), asyncHandler(getCertificates));
+router.put('/certificates/:id', checkModuleAccess('certificates'), asyncHandler(updateCertificate));
+router.delete('/certificates/:id', checkModuleAccess('certificates'), asyncHandler(deleteCertificate));
 
 // Hostel Management
 router.use('/hostels', checkModuleAccess('hostel'));
 router.route('/hostels')
-  .get(getHostels)
-  .post(checkPermission('hostel.manage'), createHostel);
+  .get(asyncHandler(getHostels))
+  .post(checkPermission('hostel.manage'), asyncHandler(createHostel));
 router.route('/hostels/:id')
-  .put(checkPermission('hostel.manage'), updateHostel)
-  .delete(checkPermission('hostel.manage'), deleteHostel);
+  .put(checkPermission('hostel.manage'), asyncHandler(updateHostel))
+  .delete(checkPermission('hostel.manage'), asyncHandler(deleteHostel));
 router.route('/hostels/:hostelId/rooms')
-  .get(getHostelRooms)
-  .post(checkPermission('hostel.manage'), createHostelRoom);
+  .get(asyncHandler(getHostelRooms))
+  .post(checkPermission('hostel.manage'), asyncHandler(createHostelRoom));
 router.route('/hostels/rooms/:id')
-  .put(checkPermission('hostel.manage'), updateHostelRoom)
-  .delete(checkPermission('hostel.manage'), deleteHostelRoom);
+  .put(checkPermission('hostel.manage'), asyncHandler(updateHostelRoom))
+  .delete(checkPermission('hostel.manage'), asyncHandler(deleteHostelRoom));
 
 export default router;

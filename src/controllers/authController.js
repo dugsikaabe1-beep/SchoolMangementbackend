@@ -731,36 +731,46 @@ export const branchLogin = async (req, res) => {
  * @access  Public
  */
 export const getTenantInfo = async (req, res) => {
-  // 1. Check for Super Admin route/context (detected by RESERVED subdomains)
-  if (req.isSuperAdminRoute) {
-    return res.json({ 
-      type: 'superadmin',
-      name: 'Super Admin Dashboard' 
-    });
-  }
+  console.log('[getTenantInfo] Request received from origin:', req.headers.origin);
+  try {
+    // 1. Check for Super Admin route/context (detected by RESERVED subdomains)
+    if (req.isSuperAdminRoute) {
+      return res.json({ 
+        type: 'superadmin',
+        name: 'Super Admin Dashboard' 
+      });
+    }
 
-  // 2. If no school is detected on req, we are on the Platform Root (e.g. localhost or root host)
-  if (!req.school) {
-    // We allow access to the platform home/login even if no tenant is found
-    // This enables the "Shared Login" experience.
+    // 2. If no school is detected on req, we are on the Platform Root (e.g. localhost or root host)
+    if (!req.school) {
+      // We allow access to the platform home/login even if no tenant is found
+      // This enables the "Shared Login" experience.
+      return res.json({
+        type: 'dev', // 'dev' type triggers platform public routes in frontend
+        name: 'EduManage Platform'
+      });
+    }
+
+    // 3. Specific School Tenant
+    const enabledFeatures = await getEnabledFeaturesForSchool(req.school._id);
+    res.json({
+      type: 'school',
+      _id: req.school._id,
+      name: req.school.name,
+      logo: req.school.logo,
+      subdomain: req.school.subdomain,
+      isActive: req.school.isActive,
+      subscriptionStatus: req.school.subscription?.paymentStatus,
+      enabledFeatures: enabledFeatures
+    });
+  } catch (error) {
+    console.error('[getTenantInfo] Error:', error);
+    // Return dev type as fallback so frontend doesn't crash
     return res.json({
-      type: 'dev', // 'dev' type triggers platform public routes in frontend
+      type: 'dev',
       name: 'EduManage Platform'
     });
   }
-
-  // 3. Specific School Tenant
-  const enabledFeatures = await getEnabledFeaturesForSchool(req.school._id);
-  res.json({
-    type: 'school',
-    _id: req.school._id,
-    name: req.school.name,
-    logo: req.school.logo,
-    subdomain: req.school.subdomain,
-    isActive: req.school.isActive,
-    subscriptionStatus: req.school.subscription?.paymentStatus,
-    enabledFeatures: enabledFeatures
-  });
 };
 
 // @desc    Auth user & get token (school-scoped; never trusts body tenant)

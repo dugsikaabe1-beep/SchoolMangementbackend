@@ -29,22 +29,33 @@ const app = express();
 // --- 1. GLOBAL SECURITY & CORS MIDDLEWARE ---
 
 const allowedOrigins = parseAllowedOrigins();
+
+// Single, consistent CORS configuration
 const corsOptions = {
   origin: (origin, callback) => {
-    // 1. Allow if no origin (non-browser)
+    // 1. Allow non-browser clients (curl, mobile native)
     if (!origin) return callback(null, true);
 
-    // 2. Explicitly allow the known frontend origins
-    if (origin === 'https://dugsihub-lilac.vercel.app' || origin === 'https://dugsimaamul.vercel.app') {
+    // 2. Always allow development origins (localhost:5173, 127.0.0.1:5173)
+    if (
+      origin === 'http://localhost:5173' ||
+      origin === 'http://127.0.0.1:5173' ||
+      origin === 'http://localhost:5174' ||
+      origin === 'http://127.0.0.1:5174'
+    ) {
       return callback(null, true);
     }
 
-    // 3. In development, be very permissive
-    if (process.env.NODE_ENV === 'development') {
+    // 3. Allow known production frontends
+    if (
+      origin === 'https://dugsihub-lilac.vercel.app' ||
+      origin === 'https://dugsimaamul.vercel.app' ||
+      origin === 'https://dugsikabe.vercel.app'
+    ) {
       return callback(null, true);
     }
 
-    // 4. Use the registry matcher
+    // 4. Use the origin matcher from corsConfig
     return originMatcher(allowedOrigins || [])(origin, callback);
   },
   credentials: true,
@@ -53,6 +64,8 @@ const corsOptions = {
     'Content-Type',
     'Authorization',
     'Accept',
+    'Origin',
+    'X-Requested-With',
     'x-tenant-id',
     'X-Tenant-ID',
     'x-school-slug',
@@ -63,62 +76,16 @@ const corsOptions = {
     'X-Branch-ID',
     'x-academic-year-id',
     'X-Academic-Year-ID',
-    'X-Requested-With',
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   optionsSuccessStatus: 200,
 };
 
-// 1.1 Handle CORS and Preflight FIRST
-if (process.env.NODE_ENV === 'development') {
-  // Manual CORS — always works for local development
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-    }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      req.headers['access-control-request-headers'] ||
-        'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with'
-    );
-    res.setHeader('Access-Control-Max-Age', '86400');
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-} else {
-  app.use(cors(corsOptions));
-}
+// 1.1 Apply CORS middleware globally
+app.use(cors(corsOptions));
 
-// Explicitly handle preflight
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  // Allow known production origins or localhost during development
-  const isAllowedOrigin =
-    origin === 'https://dugsikabe.vercel.app' ||
-    origin === 'https://dugsihub-lilac.vercel.app' ||
-    origin === 'https://dugsimaamul.vercel.app' ||
-    origin === 'https://schoolmangementbackend-deployment.up.railway.app' ||
-    (process.env.NODE_ENV === 'development' && origin && origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app:'));
-
-  if (isAllowedOrigin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, x-tenant-id, X-Tenant-ID, x-school-slug, X-School-Slug, x-dev-tenant-subdomain, X-Dev-Tenant-Subdomain, x-branch-id, X-Branch-ID, x-academic-year-id, X-Academic-Year-ID, x-requested-with');
-  }
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  next();
-});
+// 1.2 Explicitly handle preflight OPTIONS requests
+app.options('*', cors(corsOptions));
 
 // 1.2 Debug logging for CORS
 app.use((req, res, next) => {
@@ -173,6 +140,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { detectTenant, injectOwnership } from './middlewares/tenantMiddleware.js';
+import { asyncHandler } from './middlewares/asyncHandler.js';
 
 // Security Headers (Helmet)
 app.use(helmet({
@@ -237,13 +205,13 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // --- 2. TENANT ISOLATION ---
-app.use(detectTenant);
-app.use(injectAcademicYear);
+app.use(asyncHandler(detectTenant));
+app.use(asyncHandler(injectAcademicYear));
 app.use('/api/', apiActivityMiddleware);
 
 // --- 2.5 PROFILE COMPLETION GUARD ---
 // Blocks school admins from accessing the platform until their profile is complete
-app.use(requireProfileCompletion);
+app.use(asyncHandler(requireProfileCompletion));
 
 // --- 3. ROUTES ---
 
@@ -358,13 +326,6 @@ app.use(ensureUserMessage);
 
 // 404 handler
 app.use((req, res) => {
-  // Ensure CORS headers for 404
-  const origin = req.headers.origin;
-  if (origin && process.env.NODE_ENV === 'development') {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-  }
-
   res.status(404).json({
     success: false,
     message: 'Route not found',
@@ -374,23 +335,6 @@ app.use((req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  // Ensure CORS headers are present even in error responses
-  const origin = req.headers.origin;
-  if (origin) {
-    if (process.env.NODE_ENV === 'development') {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
-    } else {
-      const allowed = parseAllowedOrigins();
-      const ok = allowed?.some((rule) =>
-        rule instanceof RegExp ? rule.test(origin) : rule === origin
-      );
-      if (ok) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
-      }
-    }
-  }
 
   // Log critical errors for monitoring
   if (err.status >= 500 || !err.status) {
