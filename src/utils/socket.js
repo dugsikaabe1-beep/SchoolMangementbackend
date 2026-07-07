@@ -1,26 +1,45 @@
 import { Server } from 'socket.io';
+import { parseAllowedOrigins } from '../config/corsConfig.js';
 
 let io;
 
 export const initSocket = (server) => {
+  const allowedOrigins = parseAllowedOrigins();
+  
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        // Allow localhost in development; restrict to known production origins in prod
-        const isDev = process.env.NODE_ENV === 'development';
-        const allowedProdOrigins = [
+        if (!origin) return callback(null, true);
+        
+        // Check against allowed list
+        const isAllowed = allowedOrigins.some((rule) => {
+          if (rule instanceof RegExp) {
+            return rule.test(origin);
+          }
+          return rule === origin;
+        });
+        
+        // Also explicitly allow the known frontends
+        const knownFrontends = [
           'https://dugsihub-lilac.vercel.app',
-          'https://schoolmangementbackend-deployment.up.railway.app'
+          'https://dugsimaamul.vercel.app',
+          'https://dugsikabe.vercel.app',
+          'http://localhost:5173',
+          'http://127.0.0.1:5173',
+          'http://localhost:5174',
+          'http://127.0.0.1:5174'
         ];
-
-        const isAllowed = isDev || (!origin) || allowedProdOrigins.includes(origin) || (origin && origin.startsWith('https://schoolmangementbackend-deployment.up.railway.app:'));
-
-        if (isAllowed) return callback(null, true);
+        
+        if (isAllowed || knownFrontends.includes(origin)) {
+          return callback(null, true);
+        }
+        
         console.log(`[Socket] Rejecting CORS for origin: ${origin}`);
         return callback(new Error('Not allowed by CORS'));
       },
       methods: ['GET', 'POST'],
-      credentials: true
+      credentials: true,
+      allowedHeaders: ['Authorization', 'Content-Type', 'Origin', 'Accept']
     }
   });
 

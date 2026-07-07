@@ -17,6 +17,7 @@ import {
 } from '../controllers/parentController.js';
 import { protect, allowParent, allowAdmin } from '../middlewares/authMiddleware.js';
 import { branchIsolation } from '../middlewares/branchMiddleware.js';
+import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { injectOwnership } from '../middlewares/tenantMiddleware.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
 
@@ -24,31 +25,31 @@ const router = express.Router();
 
 // Apply auth middleware to all routes except /link
 const parentRouter = express.Router();
-parentRouter.use(protect);
+parentRouter.use(asyncHandler(protect));
 parentRouter.use(allowParent);
 parentRouter.use(injectOwnership);
-parentRouter.use(branchIsolation);
+parentRouter.use(asyncHandler(branchIsolation));
 
 // Parent endpoints
-parentRouter.get('/children', getParentChildren);
-parentRouter.get('/children/:studentId/profile', getChildProfile);
-parentRouter.get('/children/:studentId/attendance', getChildAttendance);
-parentRouter.get('/children/:studentId/results', getChildResults);
-parentRouter.get('/children/:studentId/fees', getChildFees);
-parentRouter.get('/children/:studentId/timetable', getChildTimetable);
-parentRouter.get('/announcements', getParentAnnouncements);
+parentRouter.get('/children', asyncHandler(getParentChildren));
+parentRouter.get('/children/:studentId/profile', asyncHandler(getChildProfile));
+parentRouter.get('/children/:studentId/attendance', asyncHandler(getChildAttendance));
+parentRouter.get('/children/:studentId/results', asyncHandler(getChildResults));
+parentRouter.get('/children/:studentId/fees', asyncHandler(getChildFees));
+parentRouter.get('/children/:studentId/timetable', asyncHandler(getChildTimetable));
+parentRouter.get('/announcements', asyncHandler(getParentAnnouncements));
 // Payment endpoints
-parentRouter.get('/children/:studentId/payment-methods', getParentPaymentMethods);
-parentRouter.post('/children/:studentId/payments/initiate', initiateParentPayment);
-parentRouter.get('/children/:studentId/payments/verify/:transactionId', verifyParentPayment);
-parentRouter.get('/children/:studentId/transactions', getParentTransactionHistory);
-parentRouter.post('/children/:studentId/payments/instructions/:providerId', getParentPaymentInstructions);
-parentRouter.put('/children/:studentId/my-payments/:id/pay', payChildMonthlyFee);
+parentRouter.get('/children/:studentId/payment-methods', asyncHandler(getParentPaymentMethods));
+parentRouter.post('/children/:studentId/payments/initiate', asyncHandler(initiateParentPayment));
+parentRouter.get('/children/:studentId/payments/verify/:transactionId', asyncHandler(verifyParentPayment));
+parentRouter.get('/children/:studentId/transactions', asyncHandler(getParentTransactionHistory));
+parentRouter.post('/children/:studentId/payments/instructions/:providerId', asyncHandler(getParentPaymentInstructions));
+parentRouter.put('/children/:studentId/my-payments/:id/pay', asyncHandler(payChildMonthlyFee));
 
 // Use the parent router for all routes except /link
 router.use('/', parentRouter);
 
 // Admin endpoint to link parents to students (separate middleware)
-router.post('/link', protect, allowAdmin, linkParentToStudents);
+router.post('/link', asyncHandler(protect), allowAdmin, asyncHandler(linkParentToStudents));
 
 export default router;

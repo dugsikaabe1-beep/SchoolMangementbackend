@@ -10,6 +10,7 @@ import { initSubscriptionChecker } from './services/subscriptionChecker.js';
 import { scheduleAllTenantBackups } from './services/backupService.js';
 import { initSocket } from './utils/socket.js';
 import { initRedis, shutdownRedis } from './config/redis.js';
+import seedSuperAdmin from './scripts/seedSuperAdmin.js';
 
 dotenv.config();
 
@@ -19,6 +20,9 @@ const PORT = process.env.PORT || 5001;
 const startServer = async () => {
   try {
     await connectDB();
+    
+    // Seed default Super Admin (idempotent)
+    await seedSuperAdmin();
 
     // Initialize Redis connections (MUST come before diagnostics & worker import)
     await initRedis();
