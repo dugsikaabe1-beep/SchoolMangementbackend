@@ -1,4 +1,5 @@
 import School from '../models/School.js';
+import Branch from '../models/Branch.js';
 import { isValidSubdomainLabel, securityLog } from '../utils/securityUtils.js';
 
 const RESERVED = new Set([
@@ -225,34 +226,24 @@ export const requireTenant = (req, res, next) => {
 
 /**
  * Ownership Middleware
- * Automatically injects tenantId (school) and branchId into req.body for creations.
- * Also sets req.branchId and req.academicYearId from headers.
+ * Automatically injects tenantId (school), branchId, and academicYearId into req.body for creations.
  */
 export const injectOwnership = (req, res, next) => {
-  // Set branchId from headers
-  const branchIdFromHeader = req.headers['x-branch-id'];
-  if (branchIdFromHeader) {
-    req.branchId = branchIdFromHeader;
-  }
-  
-  // Set academicYearId from headers
-  const academicYearIdFromHeader = req.headers['x-academic-year-id'];
-  if (academicYearIdFromHeader) {
-    req.academicYearId = academicYearIdFromHeader;
-  }
-  
   // Also check if user has a school (from auth) to set req.school/req.schoolId
   if (!req.schoolId && req.user?.school) {
     req.schoolId = req.user.school;
   }
   
-  // Inject school and branch into POST requests if not present
+  // Inject school, branch, and academic year into POST requests if not present
   if (req.method === 'POST') {
     if (req.schoolId && !req.body.school) {
       req.body.school = req.schoolId;
     }
     if (req.branchId && !req.body.branch) {
       req.body.branch = req.branchId;
+    }
+    if (req.academicYearId && !req.body.academicYear) {
+      req.body.academicYear = req.academicYearId;
     }
   }
   next();
@@ -262,6 +253,76 @@ export const injectOwnership = (req, res, next) => {
  * Super-admin auth and APIs must not run in an active school tenant context
  * (prevents confused-deputy / cross-context token use on school hosts).
  */
+/**
+ * Inject Branch Middleware
+ * Automatically resolves branchId:
+ * 1. From header: X-Branch-ID
+ * 2. From user's branch field
+ * 3. Falls back to Main Branch
+ * 4. Creates Main Branch if none exists
+ */
+export const injectBranch = async (req, res, next) => {
+  // Skip if super admin route
+  if (req.isSuperAdminRoute) {
+    return next();
+  }
+
+  let branchId = null;
+  const schoolId = req.schoolId || req.user?.school;
+  if (!schoolId) {
+    return next();
+  }
+
+  // 1. Check header first
+  const branchIdFromHeader = req.headers['x-branch-id'];
+  if (branchIdFromHeader) {
+    branchId = branchIdFromHeader;
+  } else if (req.user?.branch) {
+    // 2. Check user's branch
+    branchId = req.user.branch;
+  } else {
+    // 3. Resolve main branch or create
+    let branch = await Branch.findOne({ 
+      tenant: schoolId, 
+      status: 'active', 
+      deletedAt: { $exists: false },
+      isMain: true
+    }).sort({ createdAt: 1 });
+
+    if (!branch) {
+      branch = await Branch.findOne({ 
+        tenant: schoolId, 
+        status: 'active', 
+        deletedAt: { $exists: false },
+        $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
+      }).sort({ createdAt: 1 });
+    }
+
+    if (!branch) {
+      branch = await Branch.findOne({ 
+        tenant: schoolId, 
+        status: 'active', 
+        deletedAt: { $exists: false } 
+      }).sort({ createdAt: 1 });
+    }
+
+    if (!branch) {
+      branch = await Branch.create({
+        tenant: schoolId,
+        name: 'Main Branch',
+        code: 'MAIN',
+        isMain: true,
+        status: 'active',
+        createdBy: req.user?._id || null
+      });
+    }
+    branchId = branch._id;
+  }
+
+  req.branchId = branchId;
+  next();
+};
+
 export const blockTenantContextForSuperAdminAuth = (req, res, next) => {
   if (req.schoolId) {
     securityLog('superadmin_auth_blocked_under_school_host', {

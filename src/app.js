@@ -139,7 +139,7 @@ import idCardRoutes from './routes/idCardRoutes.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { detectTenant, injectOwnership } from './middlewares/tenantMiddleware.js';
+import { detectTenant, injectBranch, injectOwnership } from './middlewares/tenantMiddleware.js';
 import { asyncHandler } from './middlewares/asyncHandler.js';
 
 // Security Headers (Helmet)
@@ -206,7 +206,9 @@ if (process.env.NODE_ENV !== 'test') {
 
 // --- 2. TENANT ISOLATION ---
 app.use(asyncHandler(detectTenant));
+app.use(asyncHandler(injectBranch));
 app.use(asyncHandler(injectAcademicYear));
+app.use(injectOwnership);
 app.use('/api/', apiActivityMiddleware);
 
 // --- 2.5 PROFILE COMPLETION GUARD ---
