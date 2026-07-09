@@ -24,9 +24,10 @@ export const getSupportedProviders = asyncHandler(async (req, res) => {
 export const getPaymentSettings = asyncHandler(async (req, res) => {
   const { provider } = req.query;
   const settings = await PaymentService.getPaymentSettings(req.schoolId, provider);
+  
   res.json({
     success: true,
-    settings: settings
+    settings: PaymentService.maskSecrets(settings)
   });
 });
 

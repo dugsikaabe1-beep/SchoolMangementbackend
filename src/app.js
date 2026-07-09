@@ -134,6 +134,7 @@ import searchRoutes from './routes/searchRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import schoolFeatureRoutes from './routes/schoolFeatureRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import waafiPayRoutes from './routes/waafiPayRoutes.js';
 import idCardRoutes from './routes/idCardRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -155,6 +156,10 @@ app.use(helmet({
     },
   },
 }));
+
+// Webhook raw body parser MUST come before global json parser
+app.use('/api/v1/payments/waafipay/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/payments/waafipay/webhook', express.raw({ type: 'application/json' }));
 
 // Body Parsing & Sanitization
 app.use(express.json({ limit: '1mb' }));
@@ -287,6 +292,7 @@ app.use('/api/v1/search', searchRoutes);
 app.use('/api/v1/onboarding', onboardingRoutes);
 app.use('/api/v1/school-features', schoolFeatureRoutes);
 app.use('/api/v1/payments', paymentRoutes);
+app.use('/api/v1/payments/waafipay', waafiPayRoutes);
 app.use('/api/v1/id-cards', idCardRoutes);
 
 // Legacy routes for backward compatibility
@@ -313,6 +319,7 @@ app.use('/api/enterprise', enterpriseRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/payments/waafipay', waafiPayRoutes);
 app.use('/api/id-cards', idCardRoutes);
 
 // Mobile dev compatibility: some Expo builds use an API_URL without /api.

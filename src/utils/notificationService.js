@@ -465,6 +465,36 @@ export const sendNotification = async ({
 };
 
 /**
+ * Send Payment Receipt Notification
+ * @param {string} transactionId Transaction ID
+ * @param {string} studentId Student ID
+ * @param {string} schoolId School ID
+ */
+export const sendPaymentReceipt = async (transactionId, studentId, schoolId) => {
+  try {
+    const User = (await import('../models/User.js')).default;
+    const student = await User.findById(studentId).populate('parent');
+    if (!student) return;
+
+    // Send push notification if implemented in this file
+    // Assumes sendNotification is available
+    await sendNotification({
+      recipientId: studentId,
+      schoolId: schoolId,
+      branchId: student.branch,
+      title: 'Payment Receipt',
+      message: `We have received your payment for ${student.name}. Thank you!`,
+      type: 'payment',
+      priority: 'high',
+      channels: ['in_app', 'push', 'email']
+    });
+
+  } catch (error) {
+    console.error('Error sending payment receipt notification:', error);
+  }
+};
+
+/**
  * Send broadcast notification to multiple recipients (recipient-based only)
  */
 export const broadcastNotification = async ({ 

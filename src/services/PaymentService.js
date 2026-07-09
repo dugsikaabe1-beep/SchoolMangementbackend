@@ -21,10 +21,9 @@ export class PaymentService {
    */
   static async getPaymentSettings(schoolId, provider = null) {
     const query = { tenant: schoolId, isActive: true };
-    
     if (provider) {
       query.provider = provider;
-      const settings = await PaymentSettings.findOne(query).select('+apiKey +secretKey +clientId +clientSecret +webhookSecret');
+      const settings = await PaymentSettings.findOne(query).select('+apiKey +secretKey +clientId +clientSecret +webhookSecret +hppKey');
       if (settings) {
         // Decrypt secrets
         const decryptedSecrets = settings.getDecryptedSecrets();
@@ -39,6 +38,35 @@ export class PaymentService {
     const settingsList = await PaymentSettings.find(query);
     // We don't decrypt secrets when getting multiple providers for security
     return settingsList;
+  }
+
+  /**
+   * Helper to mask secrets for frontend delivery
+   */
+  static maskSecrets(settings) {
+    if (!settings) return settings;
+    const ALL_SECRET_FIELDS = [
+      'apiKey', 'secretKey', 'clientId', 'clientSecret', 'webhookSecret',
+      'hppKey'
+    ];
+    
+    // If it's an array (list of settings)
+    if (Array.isArray(settings)) {
+      return settings.map(s => this.maskSecrets(s));
+    }
+    
+    // If it's a single object
+    const masked = { ...(settings._doc || settings) };
+    ALL_SECRET_FIELDS.forEach(f => {
+      if (masked[f]) {
+        if (masked[f].length > 4) {
+          masked[f] = '**************' + masked[f].slice(-4);
+        } else {
+          masked[f] = '********';
+        }
+      }
+    });
+    return masked;
   }
 
   /**

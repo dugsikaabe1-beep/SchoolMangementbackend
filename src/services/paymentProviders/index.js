@@ -3,6 +3,7 @@ import ZaadProvider from './ZaadProvider.js';
 import SahalProvider from './SahalProvider.js';
 import SalaamBankProvider from './SalaamBankProvider.js';
 import PremierBankProvider from './PremierBankProvider.js';
+import WaafiPayProvider from './WaafiPayProvider.js';
 import PaymentProvider from './PaymentProvider.js';
 
 /**
@@ -15,7 +16,8 @@ export class PaymentProviderFactory {
     ZAAD: ZaadProvider,
     SAHAL: SahalProvider,
     SALAAM_BANK: SalaamBankProvider,
-    PREMIER_BANK: PremierBankProvider
+    PREMIER_BANK: PremierBankProvider,
+    WAAFIPAY: WaafiPayProvider
   };
 
   /**

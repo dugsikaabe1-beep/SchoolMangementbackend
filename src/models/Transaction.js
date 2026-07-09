@@ -62,7 +62,7 @@ const transactionSchema = new mongoose.Schema(
     provider: {
       type: String,
       required: true,
-      enum: ['EVC_PLUS', 'ZAAD', 'SAHAL', 'SALAAM_BANK', 'PREMIER_BANK', 'CASH', 'BANK_TRANSFER'],
+      enum: ['EVC_PLUS', 'ZAAD', 'SAHAL', 'SALAAM_BANK', 'PREMIER_BANK', 'CASH', 'BANK_TRANSFER', 'WAAFIPAY'],
       index: true
     },
 
@@ -95,13 +95,31 @@ const transactionSchema = new mongoose.Schema(
     // Status
     status: {
       type: String,
-      enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REFUNDED', 'CANCELLED', 'EXPIRED'],
+      enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REFUNDED', 'CANCELLED', 'EXPIRED', 'REVERSED', 'PREAUTHORIZED', 'COMMITTED'],
       default: 'PENDING',
       index: true
     },
     failureReason: {
       type: String,
       trim: true
+    },
+
+    // WaafiPay Specific Fields
+    issuerTransactionId: {
+      type: String,
+      index: true
+    },
+    merchantCharges: {
+      type: Number,
+      default: 0
+    },
+    waafiState: {
+      type: String,
+      trim: true
+    },
+    preAuthRef: {
+      type: String,
+      index: true
     },
 
     // Customer information
