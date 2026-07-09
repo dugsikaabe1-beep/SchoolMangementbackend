@@ -930,6 +930,13 @@ export const updateStudent = async (req, res) => {
       });
     }
 
+    // Branch ownership check: branch-scoped users cannot edit students from another branch
+    const { verifyBranchOwnership } = await import('../middlewares/branchContext.js');
+    const ownershipCheck = verifyBranchOwnership(req, student.branch);
+    if (!ownershipCheck.allowed) {
+      return res.status(403).json(ownershipCheck.response);
+    }
+
     // Update simple fields
     if (parentName !== undefined) student.parentName = parentName;
     if (parentPhone !== undefined) student.parentPhone = parentPhone;
@@ -1090,6 +1097,13 @@ export const deleteStudent = async (req, res) => {
         message: 'Student not found',
         userMessage: 'Student not found.'
       });
+    }
+
+    // Branch ownership check: branch-scoped users cannot delete students from another branch
+    const { verifyBranchOwnership } = await import('../middlewares/branchContext.js');
+    const ownershipCheck = verifyBranchOwnership(req, student.branch);
+    if (!ownershipCheck.allowed) {
+      return res.status(403).json(ownershipCheck.response);
     }
 
     student.isDeleted = true;
@@ -2203,6 +2217,13 @@ export const updateTeacher = async (req, res) => {
       });
     }
 
+    // Branch ownership check: branch-scoped users cannot edit teachers from another branch
+    const { verifyBranchOwnership } = await import('../middlewares/branchContext.js');
+    const ownershipCheck = verifyBranchOwnership(req, teacher.branch);
+    if (!ownershipCheck.allowed) {
+      return res.status(403).json(ownershipCheck.response);
+    }
+
     // Validate and update name
     if (name !== undefined) {
       if (!name.trim()) {
@@ -2358,6 +2379,13 @@ export const deleteTeacher = async (req, res) => {
         message: 'Teacher not found',
         userMessage: 'Teacher not found.'
       });
+    }
+
+    // Branch ownership check: branch-scoped users cannot delete teachers from another branch
+    const { verifyBranchOwnership } = await import('../middlewares/branchContext.js');
+    const ownershipCheck = verifyBranchOwnership(req, teacher.branch);
+    if (!ownershipCheck.allowed) {
+      return res.status(403).json(ownershipCheck.response);
     }
 
     teacher.isDeleted = true;

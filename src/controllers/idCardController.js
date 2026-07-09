@@ -623,7 +623,7 @@ export const getIDCardPreview = async (req, res) => {
       termsAndConditions: 'This card is the property of the school. If found, please return to the school office.'
     };
 
-    const html = generateIDCardHTML(idCard, design, idCard.school);
+    const html = await generateIDCardHTML(idCard, design, idCard.school);
 
     res.set('Content-Type', 'text/html');
     res.send(html);

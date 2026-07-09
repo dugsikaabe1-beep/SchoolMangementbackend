@@ -25,7 +25,7 @@ import {
   revokeTemporaryClearance
 } from '../controllers/examHallController.js';
 import { protect, allowTeacher } from '../middlewares/authMiddleware.js';
-import { branchIsolation } from '../middlewares/branchMiddleware.js';
+import { checkBranchAccess } from '../middlewares/branchContext.js';
 import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 import { injectAcademicYear } from '../utils/academicUtils.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
@@ -38,9 +38,9 @@ const router = express.Router();
 router.use(asyncHandler(protect));
 router.use(allowTeacher);
 router.use(asyncHandler(injectBranch));
-router.use(asyncHandler(injectAcademicYear));
 router.use(injectOwnership);
-router.use(asyncHandler(branchIsolation));
+router.use(asyncHandler(checkBranchAccess));
+router.use(asyncHandler(injectAcademicYear));
 
 // Read-only routes (no subscription check needed)
 router.get('/dashboard-stats', asyncHandler(getTeacherDashboardStats));

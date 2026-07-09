@@ -275,17 +275,16 @@ export const resolveBranch = async (schoolId, userId = null) => {
 
 /**
  * Inject Branch Middleware
- * Automatically resolves branchId:
- * 1. From header: X-Branch-ID
- * 2. From user's branch field
- * 3. Falls back to Main Branch
- * 4. Creates Main Branch if none exists
+ * Sets req.branchId based on role + header, respecting School Admin's all-branches mode.
+ *
+ * Order of resolution:
+ *  1. Super Admin → no branch set (unrestricted)
+ *  2. School Admin with X-Branch-ID header → set to that branch
+ *  3. School Admin without header → null (all branches)
+ *  4. Branch-scoped user (teacher, branch_admin, etc.) → their assigned branch
+ *  5. Branch-scoped user with no branch → resolve/create Main Branch & assign
  */
 export const injectBranch = async (req, res, next) => {
-  console.log('[injectBranch] Starting');
-  console.log('[injectBranch] req.isSuperAdminRoute:', req.isSuperAdminRoute);
-  console.log('[injectBranch] req.user:', req.user ? { id: req.user._id, school: req.user.school, branch: req.user.branch } : 'NOT FOUND');
-  console.log('[injectBranch] req.schoolId:', req.schoolId);
   // Skip if super admin route
   if (req.isSuperAdminRoute) {
     return next();
@@ -294,48 +293,50 @@ export const injectBranch = async (req, res, next) => {
   // Set schoolId from user if not already set
   if (!req.schoolId && req.user?.school) {
     req.schoolId = req.user.school;
-    console.log('[injectBranch] Set schoolId from user.school:', req.schoolId);
   }
 
-  let branchId = null;
   const schoolId = req.schoolId;
   if (!schoolId) {
-    console.log('[injectBranch] No schoolId, returning next');
     return next();
   }
 
-  // 1. Check header first
-  const branchIdFromHeader = req.headers['x-branch-id'];
-  if (branchIdFromHeader) {
-    branchId = branchIdFromHeader;
-    console.log('[injectBranch] Got branchId from header:', branchId);
-  } else if (req.user?.branch) {
-    // 2. Check user's branch
-    branchId = req.user.branch;
-    console.log('[injectBranch] Got branchId from user.branch:', branchId);
-  } else {
-    // 3. Resolve main branch or create
-    console.log('[injectBranch] Calling resolveBranch with schoolId:', schoolId);
-    const branch = await resolveBranch(schoolId, req.user?._id);
-    branchId = branch._id;
-    console.log('[injectBranch] Resolved branch:', branch);
+  const user     = req.user;
+  const role     = user?.role;
+  const isSuperAdminRole = role === 'superadmin' || role === 'super_admin';
+  const isSchoolAdminRole = ['schooladmin', 'school_admin', 'admin'].includes(role) ||
+                             user?.branchScope === 'ALL_BRANCHES';
+
+  // ── Super Admin: no branch filtering ──────────────────────────────────────
+  if (isSuperAdminRole) {
+    req.branchId = undefined;
+    return next();
   }
 
-  req.branchId = branchId;
-  console.log('[injectBranch] Set req.branchId to:', req.branchId);
+  // ── School Admin: respect X-Branch-ID header, else null (all branches) ───
+  if (isSchoolAdminRole) {
+    const headerBranch = req.headers['x-branch-id'];
+    req.branchId = (headerBranch && headerBranch !== 'all') ? headerBranch : null;
+    return next();
+  }
 
-  // If user doesn't have a branch assigned yet, assign this one
-  if (req.user && !req.user.branch) {
-    console.log('[injectBranch] Updating user to set branch to:', branchId);
-    await User.findByIdAndUpdate(
-      req.user._id, 
-      { branch: branchId }, 
-      { new: true }
-    );
+  // ── Branch-scoped user: use their assigned branch ─────────────────────────
+  if (user?.branch) {
+    req.branchId = user.branch._id?.toString() || user.branch.toString();
+    return next();
+  }
+
+  // ── No branch yet: resolve or create Main Branch and assign to user ───────
+  const branch = await resolveBranch(schoolId, user?._id);
+  const branchId = branch._id;
+  req.branchId = branchId;
+
+  if (user?._id) {
+    await User.findByIdAndUpdate(user._id, { branch: branchId }, { new: true });
   }
 
   next();
 };
+
 
 /**
  * Ownership Middleware

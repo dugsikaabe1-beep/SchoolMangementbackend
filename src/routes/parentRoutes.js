@@ -16,7 +16,7 @@ import {
   payChildMonthlyFee
 } from '../controllers/parentController.js';
 import { protect, allowParent, allowAdmin } from '../middlewares/authMiddleware.js';
-import { branchIsolation } from '../middlewares/branchMiddleware.js';
+import { checkBranchAccess } from '../middlewares/branchContext.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 import { injectAcademicYear } from '../utils/academicUtils.js';
@@ -31,7 +31,7 @@ parentRouter.use(allowParent);
 parentRouter.use(asyncHandler(injectBranch));
 parentRouter.use(asyncHandler(injectAcademicYear));
 parentRouter.use(injectOwnership);
-parentRouter.use(asyncHandler(branchIsolation));
+parentRouter.use(asyncHandler(checkBranchAccess));
 
 // Parent endpoints
 parentRouter.get('/children', asyncHandler(getParentChildren));

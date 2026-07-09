@@ -12,7 +12,15 @@ import { initSocket } from './utils/socket.js';
 import { initRedis, shutdownRedis } from './config/redis.js';
 import seedSuperAdmin from './scripts/seedSuperAdmin.js';
 
+import { branchIsolationPlugin } from './middlewares/branchContext.js';
+
 dotenv.config();
+
+// ── Register branch isolation plugin globally BEFORE any model is compiled ──
+// Every schema that has a `branch` field will automatically apply the active
+// branch filter from AsyncLocalStorage on every query.
+mongoose.plugin(branchIsolationPlugin);
+
 
 const PORT = process.env.PORT || 5001;
 

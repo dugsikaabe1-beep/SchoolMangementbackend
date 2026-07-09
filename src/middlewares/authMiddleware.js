@@ -260,66 +260,14 @@ export const protect = async (req, res, next) => {
   }
 };
 
+
 /**
- * Branch Isolation Middleware
- * Ensures strict data separation between campuses.
- * 
- * Logic:
- * 1. SPECIFIC Scope (Teachers, Students, most Staff): 
- *    - Strictly forced to their assigned branch.
- *    - Cannot override via headers.
- * 2. ALL_BRANCHES Scope (School Admins, Global Managers):
- *    - Can see a specific branch by passing 'x-branch-id' header.
- *    - Can see 'All Branches' by NOT passing the header (or passing 'all').
+ * branchIsolation — canonical implementation lives in branchContext.js.
+ * Re-exported here for backward compatibility with routes that import from authMiddleware.
  */
-export const branchIsolation = async (req, res, next) => {
-  if (!req.user || isSuperRole(req.user.role)) {
-    return next();
-  }
+export { checkBranchAccess as branchIsolation } from './branchContext.js';
 
-  const user = req.user;
-  const branchScope = user.branchScope || 'SPECIFIC';
-  const requestBranchId = req.headers['x-branch-id'] || req.headers['X-Branch-ID'];
 
-  if (branchScope === 'SPECIFIC') {
-    // SECURITY: Users with SPECIFIC scope are hard-locked to their assigned branch.
-    if (user.branch) {
-      req.branchId = user.branch.toString();
-    } else {
-      // If a specific-scope user has no branch assigned, they are prohibited from accessing branch-aware data
-      console.warn(`[Security] Specific-scope user ${user.name} has no assigned branch.`);
-      return res.status(403).json({
-        success: false,
-        message: 'No branch assigned',
-        userMessage: 'You must be assigned to a branch to access this information.'
-      });
-    }
-
-    // If they tried to request a different branch via header, block them
-    if (requestBranchId && requestBranchId !== 'all' && requestBranchId !== req.branchId) {
-      securityLog('branch_isolation_violation', {
-        userId: String(user._id),
-        userBranch: String(user.branch),
-        requestBranch: String(requestBranchId),
-        path: req.path
-      });
-      return res.status(403).json({
-        success: false,
-        message: 'Branch Access Denied',
-        userMessage: 'You are not authorized to view data from other branches.'
-      });
-    }
-  } else if (branchScope === 'ALL_BRANCHES') {
-    // ALL_BRANCHES scope: Flexible access within the tenant
-    if (requestBranchId && requestBranchId !== 'all' && requestBranchId !== 'null' && requestBranchId !== 'undefined') {
-      req.branchId = requestBranchId;
-    } else {
-      req.branchId = null; // This signals 'All Branches' to the controllers
-    }
-  }
-
-  next();
-};
 
 export const checkPermission = (requiredPermission) => {
   return (req, res, next) => {

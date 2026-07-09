@@ -164,7 +164,7 @@ import {
 } from '../middlewares/authMiddleware.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
 import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
-import { branchIsolation } from '../middlewares/branchMiddleware.js';
+import { checkBranchAccess } from '../middlewares/branchContext.js';
 import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 import { injectAcademicYear } from '../utils/academicUtils.js';
 import { checkSubscription } from '../middlewares/subscriptionMiddleware.js';
@@ -178,7 +178,7 @@ const router = express.Router();
 router.use(asyncHandler(protect));
 router.use(asyncHandler(injectBranch));
 router.use(injectOwnership);
-router.use(asyncHandler(branchIsolation));
+router.use(asyncHandler(checkBranchAccess));
 router.use(asyncHandler(injectAcademicYear));
 router.use(checkSubscription);
 router.use(auditMiddleware('ADMIN_PANEL'));
