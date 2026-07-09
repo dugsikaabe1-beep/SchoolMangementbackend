@@ -105,16 +105,13 @@ export const detectTenant = async (req, res, next) => {
     return next();
   }
 
-  // Skip tenant detection entirely for auth-related routes
-  if (req.originalUrl && (
+  // For auth routes, still process tenant from headers/body but don't require it for super admin
+  const isAuthRoute = req.originalUrl && (
     req.originalUrl.includes('/api/auth') || 
     req.originalUrl.includes('/api/v1/auth') ||
     req.originalUrl.includes('/api/super-admin/login') ||
     req.originalUrl.includes('/api/v1/super-admin/login')
-  )) {
-    console.log('[Tenant] Skipping tenant detection for auth route');
-    return next();
-  }
+  );
 
   const host = getHost(req);
   const rootDomain = (process.env.ROOT_DOMAIN || '').trim().toLowerCase();
@@ -133,18 +130,18 @@ export const detectTenant = async (req, res, next) => {
   }
 
   if (!subdomain) {
-    subdomain = mobileHeaderSubdomain(req) || req.query.school || req.query.tenantId;
+    subdomain = mobileHeaderSubdomain(req) || req.query.school || req.query.tenantId || req.body.tenantId;
     if (subdomain && process.env.NODE_ENV === 'development') {
-      console.log(`[Tenant] Subdomain found in headers/query: ${subdomain}`);
+      console.log(`[Tenant] Subdomain found in headers/query/body: ${subdomain}`);
     }
   }
 
   // Debugging: Log the detection process
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[Tenant] Detection: host=${host}, root=${rootDomain}, resolved_subdomain=${subdomain || 'none'}`);
+    console.log(`[Tenant] Detection: host=${host}, root=${rootDomain}, resolved_subdomain=${subdomain || 'none'}, isAuthRoute=${isAuthRoute}`);
   }
 
-  // Try to set school context even for authenticated users
+  // Try to set school context even for auth routes
   if (subdomain) {
     try {
       const school = await School.findOne({
@@ -159,9 +156,11 @@ export const detectTenant = async (req, res, next) => {
         req.tenantId = school.subdomain;
       }
     } catch (error) {
-      console.warn('[Tenant] Error fetching school for authenticated user:', error);
+      console.warn('[Tenant] Error fetching school for auth route:', error);
     }
   }
+
+
 
   // Bare localhost / 127.0.0.1 / IP: skip school lookup entirely
   if (isBareLocalDevHost(host)) {

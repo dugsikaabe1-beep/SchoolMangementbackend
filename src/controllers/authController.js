@@ -91,11 +91,27 @@ const handleSuccessfulLogin = async (req, user) => {
 export const studentLogin = async (req, res) => {
   const { customId, password, tenantId, branchId } = req.body;
   
+  console.log(`[studentLogin] Request received:`, {
+    customId,
+    password: '***',
+    tenantId,
+    branchId,
+    reqSchoolId: req.schoolId,
+    reqTenantId: req.tenantId,
+    headers: {
+      'x-tenant-id': req.headers['x-tenant-id'],
+      'x-dev-tenant-subdomain': req.headers['x-dev-tenant-subdomain'],
+      'x-branch-id': req.headers['x-branch-id']
+    }
+  });
+
   let selectedSchoolId = req.schoolId;
   if (tenantId) {
     const school = await School.findOne({ subdomain: tenantId.toLowerCase().trim(), isActive: true });
     if (school) selectedSchoolId = school._id;
   }
+  
+  console.log(`[studentLogin] selectedSchoolId after processing:`, selectedSchoolId);
   
   if (!selectedSchoolId) {
     return res.status(400).json({
@@ -219,6 +235,21 @@ export const studentLogin = async (req, res) => {
 // @access  Public
 export const teacherLogin = async (req, res) => {
   const { customId, password, tenantId, branchId } = req.body;
+  
+  console.log(`[teacherLogin] Request received:`, {
+    customId,
+    password: '***',
+    tenantId,
+    branchId,
+    reqSchoolId: req.schoolId,
+    reqTenantId: req.tenantId,
+    headers: {
+      'x-tenant-id': req.headers['x-tenant-id'],
+      'x-dev-tenant-subdomain': req.headers['x-dev-tenant-subdomain'],
+      'x-branch-id': req.headers['x-branch-id']
+    }
+  });
+
   // Use tenant detected from header/host OR provided tenantId in body
   let selectedSchoolId = req.schoolId;
   
@@ -229,6 +260,8 @@ export const teacherLogin = async (req, res) => {
       selectedSchoolId = school._id;
     }
   }
+  
+  console.log(`[teacherLogin] selectedSchoolId after processing:`, selectedSchoolId);
   
   if (!selectedSchoolId) {
     return res.status(400).json({
@@ -381,12 +414,31 @@ export const teacherLogin = async (req, res) => {
 // @access  Public
 export const parentLogin = async (req, res) => {
   const { customId, phone, email, password, tenantId, branchId } = req.body;
+  
+  console.log(`[parentLogin] Request received:`, {
+    customId,
+    phone,
+    email,
+    password: '***',
+    tenantId,
+    branchId,
+    reqSchoolId: req.schoolId,
+    reqTenantId: req.tenantId,
+    headers: {
+      'x-tenant-id': req.headers['x-tenant-id'],
+      'x-dev-tenant-subdomain': req.headers['x-dev-tenant-subdomain'],
+      'x-branch-id': req.headers['x-branch-id']
+    }
+  });
+
   let selectedSchoolId = req.schoolId;
 
   if (tenantId) {
     const school = await School.findOne({ subdomain: tenantId.toLowerCase().trim(), isActive: true });
     if (school) selectedSchoolId = school._id;
   }
+
+  console.log(`[parentLogin] selectedSchoolId after processing:`, selectedSchoolId);
 
   if (!selectedSchoolId) {
     return res.status(400).json({
