@@ -56,51 +56,7 @@ const MONTH_NAMES = [
   'July','August','September','October','November','December',
 ];
 
-// Helper function to resolve branch ID
-const resolveBranchId = async (req) => {
-  // If explicitly set to null (ALL_BRANCHES), return null
-  if (req.branchId === null) {
-    return null;
-  }
-  
-  let branchId = req.branchId || req.user?.branch;
-  
-  if (!branchId) {
-    const schoolId = req.user.school?._id || req.user.school;
-    let branch = await Branch.findOne({ 
-      tenant: schoolId, 
-      status: 'active', 
-      deletedAt: { $exists: false },
-      isMain: true
-    }).sort({ createdAt: 1 });
 
-    if (!branch) {
-      branch = await Branch.findOne({ 
-        tenant: schoolId, 
-        status: 'active', 
-        deletedAt: { $exists: false },
-        $or: [{ name: 'Main Branch' }, { code: 'MAIN' }]
-      }).sort({ createdAt: 1 });
-    }
-
-    if (!branch) {
-      branch = await Branch.findOne({ tenant: schoolId, status: 'active', deletedAt: { $exists: false } }).sort({ createdAt: 1 });
-    }
-
-    if (!branch) {
-      branch = await Branch.create({
-        tenant: schoolId,
-        name: 'Main Branch',
-        code: 'MAIN',
-        isMain: true,
-        status: 'active',
-        createdBy: req.user._id
-      });
-    }
-    branchId = branch._id;
-  }
-  return branchId;
-};
 
 // Helper function to calculate grade
 const calculateGrade = (avg) => {
