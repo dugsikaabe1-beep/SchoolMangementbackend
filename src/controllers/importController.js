@@ -11,7 +11,7 @@ import mongoose from 'mongoose';
 import { generateCustomId } from '../utils/schoolUtils.js';
 import { logAction } from '../utils/auditLogger.js';
 import { getCurrentAcademicYear } from '../utils/academicUtils.js';
-import { resolveBranch } from '../middlewares/tenantMiddleware.js';
+import { resolveBranch, resolveBranchId } from '../middlewares/tenantMiddleware.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -64,22 +64,7 @@ async function parseWorkbook(buffer, mimetype) {
   return rows;
 }
 
-// Helper function to resolve branch ID
-const resolveBranchId = async (req) => {
-  // If explicitly set to null (ALL_BRANCHES), return null
-  if (req.branchId === null) {
-    return null;
-  }
-  
-  let branchId = req.branchId || req.user?.branch;
-  
-  if (!branchId) {
-    const schoolId = req.schoolId || req.user.school?._id || req.user.school;
-    const branch = await resolveBranch(schoolId, req.user?._id);
-    branchId = branch._id;
-  }
-  return branchId;
-};
+
 
 // ─── POST /api/admin/students/import ─────────────────────────────────────────
 
@@ -98,7 +83,12 @@ export const importStudents = async (req, res) => {
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
   // Resolve branch ID
-  const branchId = await resolveBranchId(req);
+  let branchId = await resolveBranchId(req);
+  // If branchId is null (school admin all branches), resolve to main branch
+  if (!branchId) {
+    const mainBranch = await resolveBranch(schoolId, req.user?._id);
+    branchId = mainBranch._id;
+  }
   console.log('[IMPORT CONTROLLER] branchId:', branchId);
 
   // Resolve academic year ID
@@ -509,7 +499,12 @@ export const importExamResults = async (req, res) => {
   if (!schoolId) return res.status(403).json({ success: false, message: 'School context not found.' });
 
   // Resolve branch ID
-  const branchId = await resolveBranchId(req);
+  let branchId = await resolveBranchId(req);
+  // If branchId is null (school admin all branches), resolve to main branch
+  if (!branchId) {
+    const mainBranch = await resolveBranch(schoolId, req.user?._id);
+    branchId = mainBranch._id;
+  }
 
   // Resolve academic year ID
   let academicYearId = req.academicYearId;

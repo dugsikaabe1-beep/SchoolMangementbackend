@@ -527,8 +527,13 @@ const generateUniqueId = async (role, schoolId) => {
 // --- Student Management ---
 export const createStudent = async (req, res) => {
   const schoolId = req.schoolId || req.user.school?._id || req.user.school;
-  const branchId = await resolveBranchId(req);
-  const academicYearId = req.academicYearId || (await getCurrentAcademicYear(schoolId))?._id;
+  let branchId = await resolveBranchId(req);
+  // If branchId is null (school admin all branches), resolve to main branch
+  if (!branchId) {
+    const mainBranch = await resolveBranch(schoolId, req.user?._id);
+    branchId = mainBranch._id;
+  }
+  const academicYearId = req.academicYearId || (await getCurrentAcademicYear(schoolId, branchId))?._id;
   
   const { 
     name, 
