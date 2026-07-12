@@ -16,6 +16,34 @@ const attendanceSchema = new mongoose.Schema(
     academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Who marked the attendance
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    
+    // Advanced attendance methods
+    method: {
+      type: String,
+      enum: ['MANUAL', 'QR', 'RFID', 'NFC', 'FACE_RECOGNITION', 'FINGERPRINT'],
+      default: 'MANUAL'
+    },
+    checkInTime: { type: Date },
+    checkOutTime: { type: Date },
+    location: {
+      latitude: Number,
+      longitude: Number,
+      accuracy: Number
+    },
+    deviceInfo: {
+      type: String,
+      deviceId: String,
+      deviceName: String
+    },
+    verificationData: {
+      type: mongoose.Schema.Types.Mixed, // Store method-specific verification data
+      qrCode: String,
+      rfidTag: String,
+      nfcId: String,
+      faceMatchScore: Number,
+      fingerprintTemplate: String
+    },
+    
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -27,6 +55,7 @@ const attendanceSchema = new mongoose.Schema(
 attendanceSchema.index({ school: 1, branch: 1, date: 1 });
 attendanceSchema.index({ user: 1, date: 1 });
 attendanceSchema.index({ school: 1, branch: 1, deletedAt: 1 });
+attendanceSchema.index({ method: 1, date: 1 });
 
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 export default Attendance;

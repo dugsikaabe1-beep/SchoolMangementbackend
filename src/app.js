@@ -136,6 +136,9 @@ import schoolFeatureRoutes from './routes/schoolFeatureRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import waafiPayRoutes from './routes/waafiPayRoutes.js';
 import idCardRoutes from './routes/idCardRoutes.js';
+import backupRoutes from './routes/backupRoutes.js';
+import attendanceRoutes from './routes/attendanceRoutes.js';
+import examRoutes from './routes/examRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -294,6 +297,13 @@ app.use('/api/v1/school-features', schoolFeatureRoutes);
 app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/payments/waafipay', waafiPayRoutes);
 app.use('/api/v1/id-cards', idCardRoutes);
+app.use('/api/v1/backups', backupRoutes);
+app.use('/api/v1/attendance', attendanceRoutes);
+app.use('/api/v1/exams', examRoutes);
+
+// Legacy routes for backward compatibility
+app.use('/api/school-features', schoolFeatureRoutes);
+app.use('/api/backups', backupRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);
@@ -321,6 +331,9 @@ app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/payments/waafipay', waafiPayRoutes);
 app.use('/api/id-cards', idCardRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/exams', examRoutes);
+app.use('/api/school-features', schoolFeatureRoutes);
 
 // Mobile dev compatibility: some Expo builds use an API_URL without /api.
 app.use('/mobile', mobileRoutes);

@@ -1,5 +1,7 @@
 import User from '../models/User.js';
 import AcademicYear from '../models/AcademicYear.js';
+import AcademicTerm from '../models/AcademicTerm.js';
+import Stream from '../models/Stream.js';
 import Class from '../models/Class.js';
 import PromotionHistory from '../models/PromotionHistory.js';
 import { logAction } from '../utils/auditLogger.js';
@@ -677,6 +679,420 @@ export const transferStudent = async (req, res) => {
     res.json({
       success: true,
       message: 'Student transferred successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Get all academic terms for a tenant/branch/academic year
+ * @route   GET /api/academic/terms
+ * @access  Private
+ */
+export const getAcademicTerms = async (req, res) => {
+  try {
+    const { academicYearId } = req.query;
+    const query = { tenant: req.schoolId };
+    
+    if (req.branchId) {
+      query.$or = [{ branch: req.branchId }, { branch: null }];
+    }
+    
+    if (academicYearId) {
+      query.academicYear = academicYearId;
+    }
+
+    const academicTerms = await AcademicTerm.find(query)
+      .populate('academicYear', 'name')
+      .sort({ order: 1, startDate: 1 });
+    
+    res.json({
+      success: true,
+      data: academicTerms
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Create a new academic term
+ * @route   POST /api/academic/terms
+ * @access  Private (School Admin)
+ */
+export const createAcademicTerm = async (req, res) => {
+  try {
+    const { name, code, academicYear, startDate, endDate, order, status, isCurrent } = req.body;
+
+    // Check if name/code already exists for this academic year
+    const existing = await AcademicTerm.findOne({ 
+      tenant: req.schoolId, 
+      academicYear, 
+      $or: [{ name }, { code }] 
+    });
+    if (existing) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Academic term name or code already exists for this year' 
+      });
+    }
+
+    // If this is set to current, deactivate others in the same academic year
+    if (isCurrent || status === 'active') {
+      await AcademicTerm.updateMany(
+        { tenant: req.schoolId, academicYear, branch: req.branchId || null },
+        { status: 'upcoming', isCurrent: false }
+      );
+    }
+
+    const academicTerm = await AcademicTerm.create({
+      name,
+      code,
+      academicYear,
+      startDate,
+      endDate,
+      order: order || 1,
+      status: status || 'upcoming',
+      isCurrent: isCurrent || status === 'active',
+      tenant: req.schoolId,
+      branch: req.branchId || null,
+      createdBy: req.user._id
+    });
+
+    await logAction(req, {
+      action: 'ACADEMIC_TERM_CREATE',
+      module: 'ACADEMIC',
+      targetId: academicTerm._id,
+      details: { name, academicYear },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: academicTerm
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Update an academic term
+ * @route   PUT /api/academic/terms/:id
+ * @access  Private (School Admin)
+ */
+export const updateAcademicTerm = async (req, res) => {
+  try {
+    const { status, isCurrent } = req.body;
+
+    // If this is being set to active/current, deactivate others in the same academic year
+    if (status === 'active' || isCurrent === true) {
+      const existing = await AcademicTerm.findOne({ _id: req.params.id, tenant: req.schoolId });
+      if (existing) {
+        await AcademicTerm.updateMany(
+          {
+            tenant: req.schoolId,
+            academicYear: existing.academicYear,
+            branch: existing.branch || req.branchId || null,
+            _id: { $ne: req.params.id },
+          },
+          { status: 'upcoming', isCurrent: false }
+        );
+        req.body.status = 'active';
+        req.body.isCurrent = true;
+      }
+    }
+
+    if (status === 'archived' || status === 'completed') {
+      req.body.isCurrent = false;
+    }
+
+    const academicTerm = await AcademicTerm.findOneAndUpdate(
+      { _id: req.params.id, tenant: req.schoolId },
+      { ...req.body, updatedBy: req.user._id },
+      { new: true }
+    );
+
+    if (!academicTerm) {
+      return res.status(404).json({ success: false, message: 'Academic term not found' });
+    }
+
+    logAction(req, {
+      action: 'ACADEMIC_TERM_UPDATE',
+      module: 'ACADEMIC',
+      targetId: academicTerm._id,
+      details: { status: academicTerm.status, isCurrent: academicTerm.isCurrent },
+    });
+
+    res.json({
+      success: true,
+      data: academicTerm
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Delete an academic term
+ * @route   DELETE /api/academic/terms/:id
+ * @access  Private (School Admin)
+ */
+export const deleteAcademicTerm = async (req, res) => {
+  try {
+    const academicTerm = await AcademicTerm.findOneAndUpdate(
+      { _id: req.params.id, tenant: req.schoolId },
+      { isDeleted: true, deletedBy: req.user._id, deletedAt: new Date() },
+      { new: true }
+    );
+
+    if (!academicTerm) {
+      return res.status(404).json({ success: false, message: 'Academic term not found' });
+    }
+
+    logAction(req, {
+      action: 'ACADEMIC_TERM_DELETE',
+      module: 'ACADEMIC',
+      targetId: academicTerm._id,
+      details: { name: academicTerm.name },
+    });
+
+    res.json({
+      success: true,
+      message: 'Academic term deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Activate an academic term (switch current term)
+ */
+export const activateAcademicTerm = async (req, res) => {
+  try {
+    const term = await AcademicTerm.findOne({ _id: req.params.id, tenant: req.schoolId });
+    if (!term) {
+      return res.status(404).json({ success: false, message: 'Academic term not found' });
+    }
+
+    await AcademicTerm.updateMany(
+      { tenant: req.schoolId, academicYear: term.academicYear, branch: term.branch, _id: { $ne: term._id } },
+      { status: 'upcoming', isCurrent: false }
+    );
+
+    term.status = 'active';
+    term.isCurrent = true;
+    term.updatedBy = req.user._id;
+    await term.save();
+
+    logAction(req, {
+      action: 'ACADEMIC_TERM_ACTIVATE',
+      module: 'ACADEMIC',
+      targetId: term._id,
+    });
+
+    res.json({ success: true, data: term });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * @desc    Archive an academic term (historical, read-only)
+ */
+export const archiveAcademicTerm = async (req, res) => {
+  try {
+    const term = await AcademicTerm.findOneAndUpdate(
+      { _id: req.params.id, tenant: req.schoolId },
+      { status: 'archived', isCurrent: false, updatedBy: req.user._id },
+      { new: true }
+    );
+    if (!term) {
+      return res.status(404).json({ success: false, message: 'Academic term not found' });
+    }
+
+    logAction(req, {
+      action: 'ACADEMIC_TERM_ARCHIVE',
+      module: 'ACADEMIC',
+      targetId: term._id,
+    });
+
+    res.json({ success: true, data: term });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ======================================
+// Stream Management
+// ======================================
+
+/**
+ * @desc    Get all streams for a tenant/branch
+ * @route   GET /api/academic/streams
+ * @access  Private
+ */
+export const getStreams = async (req, res) => {
+  try {
+    const query = { tenant: req.schoolId, isDeleted: false };
+    
+    if (req.branchId) {
+      query.$or = [{ branch: req.branchId }, { branch: null }];
+    }
+
+    const streams = await Stream.find(query)
+      .populate('branch', 'name')
+      .sort({ name: 1 });
+    
+    res.json({
+      success: true,
+      data: streams
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Create a new stream
+ * @route   POST /api/academic/streams
+ * @access  Private (School Admin)
+ */
+export const createStream = async (req, res) => {
+  try {
+    const { name, code, branch, description } = req.body;
+
+    const existing = await Stream.findOne({ 
+      tenant: req.schoolId, 
+      $or: [{ name }, { code }],
+      isDeleted: false
+    });
+    if (existing) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Stream name or code already exists' 
+      });
+    }
+
+    const stream = await Stream.create({
+      name,
+      code,
+      branch,
+      description,
+      tenant: req.schoolId,
+      createdBy: req.user._id
+    });
+
+    await logAction(req, {
+      action: 'STREAM_CREATE',
+      module: 'ACADEMIC',
+      targetId: stream._id,
+      details: { name, code, branch },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: stream
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Update a stream
+ * @route   PUT /api/academic/streams/:id
+ * @access  Private (School Admin)
+ */
+export const updateStream = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const stream = await Stream.findOneAndUpdate(
+      { _id: id, tenant: req.schoolId, isDeleted: false },
+      { ...req.body, updatedBy: req.user._id },
+      { new: true }
+    );
+
+    if (!stream) {
+      return res.status(404).json({ success: false, message: 'Stream not found' });
+    }
+
+    await logAction(req, {
+      action: 'STREAM_UPDATE',
+      module: 'ACADEMIC',
+      targetId: stream._id,
+      details: req.body,
+    });
+
+    res.json({
+      success: true,
+      data: stream
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Delete a stream (soft delete)
+ * @route   DELETE /api/academic/streams/:id
+ * @access  Private (School Admin)
+ */
+export const deleteStream = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const stream = await Stream.findOneAndUpdate(
+      { _id: id, tenant: req.schoolId, isDeleted: false },
+      { 
+        isDeleted: true, 
+        deletedAt: new Date(), 
+        deletedBy: req.user._id,
+        updatedBy: req.user._id 
+      },
+      { new: true }
+    );
+
+    if (!stream) {
+      return res.status(404).json({ success: false, message: 'Stream not found' });
+    }
+
+    await logAction(req, {
+      action: 'STREAM_DELETE',
+      module: 'ACADEMIC',
+      targetId: stream._id,
+      details: { name: stream.name },
+    });
+
+    res.json({
+      success: true,
+      message: 'Stream deleted successfully'
     });
   } catch (error) {
     res.status(500).json({

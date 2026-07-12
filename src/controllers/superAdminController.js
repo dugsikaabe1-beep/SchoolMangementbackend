@@ -18,6 +18,7 @@ import {
   generateRefreshToken,
   setTokenCookies,
 } from '../utils/tokenUtils.js';
+import { FEATURE_REGISTRY as ALL_FEATURES } from '../config/featureRegistry.js';
 
 const SUPER_ADMIN_ROLES = ['superadmin', 'super_admin'];
 const SCHOOL_ADMIN_ROLES = ['schooladmin', 'school_admin'];
@@ -1131,6 +1132,32 @@ export const deleteSchoolAdmin = async (req, res) => {
     res.status(500).json({
       message: 'Failed to delete school admin',
       userMessage: 'Failed to delete school admin. Please try again.'
+    });
+  }
+};
+
+// --- Feature Registry ---
+export const getFeatureRegistry = async (req, res) => {
+  try {
+    // Organize features by category
+    const byCategory = ALL_FEATURES.reduce((acc, feature) => {
+      if (!acc[feature.category]) {
+        acc[feature.category] = [];
+      }
+      acc[feature.category].push(feature);
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      data: ALL_FEATURES,
+      byCategory
+    });
+  } catch (error) {
+    console.error('Get Feature Registry Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch feature registry'
     });
   }
 };

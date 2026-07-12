@@ -14,7 +14,7 @@ import {
 import { escapeRegex } from '../utils/securityUtils.js';
 import { logAction } from '../utils/auditLogger.js';
 import { findUserSafely } from '../utils/safeUserQuery.js';
-import { generateOTP, hashOTP, sendOTPEmail, verifyOTP as verifyOTPHash } from '../utils/twoFactorUtils.js';
+import { generateOTP, hashOTP, sendOTPEmail, verifyOTP as verifyOTPHash, generateTOTPSecret, generateTOTPQRCode, verifyTOTP, generateBackupCodes, hashBackupCodes, verifyBackupCode } from '../utils/twoFactorUtils.js';
 import { sendVerificationEmail, sendTestEmail } from '../utils/emailService.js';
 import crypto from 'crypto';
 
@@ -1885,6 +1885,300 @@ export const testEmail = async (req, res) => {
       message: 'Failed to send test email',
       userMessage: 'Failed to send test email. Please check your email configuration.',
       error: error.message
+    });
+  }
+};
+
+// @desc    Setup MFA - Generate TOTP secret and QR code
+// @route   POST /api/auth/mfa/setup
+// @access  Private
+export const setupMFA = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+        userMessage: 'User not found.'
+      });
+    }
+
+    // Generate TOTP secret
+    const secret = generateTOTPSecret(user);
+    
+    // Generate QR code
+    const qrCode = await generateTOTPQRCode(secret);
+    
+    // Generate backup codes
+    const backupCodes = generateBackupCodes(10);
+    const hashedBackupCodes = await hashBackupCodes(backupCodes);
+
+    // Store secret temporarily (not enabled yet)
+    user.twoFactorSecret = secret.base32;
+    user.twoFactorRecoveryCodes = hashedBackupCodes;
+    await user.save();
+
+    await logAction(req, {
+      action: 'MFA_SETUP_INITIATED',
+      module: 'AUTH',
+      targetId: user._id
+    });
+
+    res.json({
+      success: true,
+      data: {
+        secret: secret.base32,
+        qrCode,
+        backupCodes // Return plain codes for user to save
+      }
+    });
+  } catch (error) {
+    console.error('MFA Setup Error:', error);
+    res.status(500).json({
+      message: 'Failed to setup MFA',
+      userMessage: 'Failed to setup two-factor authentication. Please try again later.'
+    });
+  }
+};
+
+// @desc    Enable MFA - Verify TOTP token and enable
+// @route   POST /api/auth/mfa/enable
+// @access  Private
+export const enableMFA = async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    if (!token) {
+      return res.status(400).json({
+        message: 'Token is required',
+        userMessage: 'Please provide the verification code from your authenticator app.'
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    
+    if (!user || !user.twoFactorSecret) {
+      return res.status(400).json({
+        message: 'MFA not setup',
+        userMessage: 'Please setup MFA first before enabling it.'
+      });
+    }
+
+    // Verify TOTP token
+    const isValid = verifyTOTP(token, user.twoFactorSecret);
+    
+    if (!isValid) {
+      return res.status(400).json({
+        message: 'Invalid token',
+        userMessage: 'The verification code is invalid. Please try again.'
+      });
+    }
+
+    // Enable MFA
+    user.twoFactorEnabled = true;
+    await user.save();
+
+    await logAction(req, {
+      action: 'MFA_ENABLED',
+      module: 'AUTH',
+      targetId: user._id
+    });
+
+    res.json({
+      success: true,
+      message: 'MFA enabled successfully',
+      userMessage: 'Two-factor authentication has been enabled for your account.'
+    });
+  } catch (error) {
+    console.error('MFA Enable Error:', error);
+    res.status(500).json({
+      message: 'Failed to enable MFA',
+      userMessage: 'Failed to enable two-factor authentication. Please try again later.'
+    });
+  }
+};
+
+// @desc    Disable MFA
+// @route   POST /api/auth/mfa/disable
+// @access  Private
+export const disableMFA = async (req, res) => {
+  const { password } = req.body;
+
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+        userMessage: 'User not found.'
+      });
+    }
+
+    // Verify password
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        message: 'Invalid password',
+        userMessage: 'Please provide your current password to disable MFA.'
+      });
+    }
+
+    // Disable MFA
+    user.twoFactorEnabled = false;
+    user.twoFactorSecret = undefined;
+    user.twoFactorRecoveryCodes = [];
+    await user.save();
+
+    await logAction(req, {
+      action: 'MFA_DISABLED',
+      module: 'AUTH',
+      targetId: user._id
+    });
+
+    res.json({
+      success: true,
+      message: 'MFA disabled successfully',
+      userMessage: 'Two-factor authentication has been disabled for your account.'
+    });
+  } catch (error) {
+    console.error('MFA Disable Error:', error);
+    res.status(500).json({
+      message: 'Failed to disable MFA',
+      userMessage: 'Failed to disable two-factor authentication. Please try again later.'
+    });
+  }
+};
+
+// @desc    Verify MFA token during login
+// @route   POST /api/auth/mfa/verify
+// @access  Public
+export const verifyMFA = async (req, res) => {
+  const { token, backupCode, userId } = req.body;
+
+  try {
+    if (!userId) {
+      return res.status(400).json({
+        message: 'User ID is required',
+        userMessage: 'User ID is required.'
+      });
+    }
+
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+        userMessage: 'User not found.'
+      });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({
+        message: 'MFA not enabled',
+        userMessage: 'Two-factor authentication is not enabled for this account.'
+      });
+    }
+
+    // Check TOTP token first
+    if (token) {
+      const isValid = verifyTOTP(token, user.twoFactorSecret);
+      
+      if (isValid) {
+        // Generate and return tokens
+        const accessToken = await issueTokens(res, user);
+        
+        await logAction(req, {
+          action: 'MFA_VERIFICATION_SUCCESS',
+          module: 'AUTH',
+          targetId: user._id
+        });
+
+        return res.json({
+          success: true,
+          token: accessToken,
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          school: user.school,
+          branch: user.branch
+        });
+      }
+    }
+
+    // Check backup code if TOTP failed
+    if (backupCode && user.twoFactorRecoveryCodes && user.twoFactorRecoveryCodes.length > 0) {
+      const isValidBackup = await verifyBackupCode(backupCode, user.twoFactorRecoveryCodes);
+      
+      if (isValidBackup) {
+        // Remove used backup code
+        user.twoFactorRecoveryCodes = user.twoFactorRecoveryCodes.filter(
+          (code, index) => !verifyBackupCode(backupCode, [code])
+        );
+        await user.save();
+
+        // Generate and return tokens
+        const accessToken = await issueTokens(res, user);
+        
+        await logAction(req, {
+          action: 'MFA_BACKUP_CODE_USED',
+          module: 'AUTH',
+          targetId: user._id
+        });
+
+        return res.json({
+          success: true,
+          token: accessToken,
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          school: user.school,
+          branch: user.branch,
+          backupCodesRemaining: user.twoFactorRecoveryCodes.length
+        });
+      }
+    }
+
+    return res.status(400).json({
+      message: 'Invalid verification code',
+      userMessage: 'The verification code is invalid. Please try again.'
+    });
+  } catch (error) {
+    console.error('MFA Verify Error:', error);
+    res.status(500).json({
+      message: 'Failed to verify MFA',
+      userMessage: 'Failed to verify two-factor authentication. Please try again later.'
+    });
+  }
+};
+
+// @desc    Get MFA status
+// @route   GET /api/auth/mfa/status
+// @access  Private
+export const getMFAStatus = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('twoFactorEnabled twoFactorSecret');
+    
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+        userMessage: 'User not found.'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        enabled: user.twoFactorEnabled,
+        setupComplete: !!user.twoFactorSecret
+      }
+    });
+  } catch (error) {
+    console.error('MFA Status Error:', error);
+    res.status(500).json({
+      message: 'Failed to get MFA status',
+      userMessage: 'Failed to get two-factor authentication status.'
     });
   }
 };

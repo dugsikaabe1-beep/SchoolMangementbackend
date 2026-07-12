@@ -12,7 +12,17 @@ import {
   transferStudent,
   getPromotionPreview,
   holdStudentsBack,
-  getPromotionHistory
+  getPromotionHistory,
+  getAcademicTerms,
+  createAcademicTerm,
+  updateAcademicTerm,
+  deleteAcademicTerm,
+  activateAcademicTerm,
+  archiveAcademicTerm,
+  getStreams,
+  createStream,
+  updateStream,
+  deleteStream
 } from '../controllers/academicController.js';
 import { 
   protect, 
@@ -45,6 +55,29 @@ router.route('/years/:id')
 
 router.post('/years/:id/activate', checkPermission('settings.manage'), asyncHandler(activateAcademicYear));
 router.post('/years/:id/archive', checkPermission('settings.manage'), asyncHandler(archiveAcademicYear));
+
+// Academic Term Management
+router.use('/terms', checkModuleAccess('academic-years'));
+router.route('/terms')
+  .get(checkPermission('settings.view'), asyncHandler(getAcademicTerms))
+  .post(checkPermission('settings.manage'), asyncHandler(createAcademicTerm));
+
+router.route('/terms/:id')
+  .put(checkPermission('settings.manage'), asyncHandler(updateAcademicTerm))
+  .delete(checkPermission('settings.manage'), asyncHandler(deleteAcademicTerm));
+
+router.post('/terms/:id/activate', checkPermission('settings.manage'), asyncHandler(activateAcademicTerm));
+router.post('/terms/:id/archive', checkPermission('settings.manage'), asyncHandler(archiveAcademicTerm));
+
+// Stream Management
+router.use('/streams', checkModuleAccess('academic-years'));
+router.route('/streams')
+  .get(checkPermission('settings.view'), asyncHandler(getStreams))
+  .post(checkPermission('settings.manage'), asyncHandler(createStream));
+
+router.route('/streams/:id')
+  .put(checkPermission('settings.manage'), asyncHandler(updateStream))
+  .delete(checkPermission('settings.manage'), asyncHandler(deleteStream));
 
 // Student Promotion Management
 router.use('/promote', checkModuleAccess('promotions'));

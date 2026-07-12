@@ -20,6 +20,11 @@ import {
   testEmail,
   registerDevice,
   unregisterDevice,
+  setupMFA,
+  enableMFA,
+  disableMFA,
+  verifyMFA,
+  getMFAStatus,
 } from '../controllers/authController.js';
 import { protect, authorizeRoles } from '../middlewares/authMiddleware.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
@@ -66,5 +71,12 @@ router.put('/reset-password', protect, asyncHandler(resetPassword));
 // Device registration for push notifications
 router.post('/profile/device', protect, asyncHandler(registerDevice));
 router.delete('/profile/device', protect, asyncHandler(unregisterDevice));
+
+// MFA Routes
+router.post('/mfa/setup', protect, asyncHandler(setupMFA));
+router.post('/mfa/enable', protect, asyncHandler(enableMFA));
+router.post('/mfa/disable', protect, asyncHandler(disableMFA));
+router.post('/mfa/verify', asyncHandler(verifyMFA));
+router.get('/mfa/status', protect, asyncHandler(getMFAStatus));
 
 export default router;
