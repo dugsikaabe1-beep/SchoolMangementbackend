@@ -40,6 +40,7 @@ import TransportVehicle from '../models/TransportVehicle.js';
 import Hostel from '../models/Hostel.js';
 import HostelRoom from '../models/HostelRoom.js';
 import { v4 as uuidv4 } from 'uuid';
+import { resolveBranchId, resolveBranch } from '../middlewares/tenantMiddleware.js';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs/promises';
@@ -329,18 +330,25 @@ export const getStudentProfile = async (req, res) => {
       return res.status(404).json({ message: 'Student not found' });
     }
 
-    const academicMatch = { school: schoolId };
-    if (req.branchId) academicMatch.branch = req.branchId;
-    if (req.academicYearName) academicMatch.academicYear = req.academicYearName;
+    const baseMatch = { school: schoolId };
+    if (req.branchId) baseMatch.branch = req.branchId;
+
+    // For models using academicYear as ObjectId (Attendance, Mark)
+    const objectIdAcademicMatch = { ...baseMatch };
+    if (req.academicYearId) objectIdAcademicMatch.academicYear = req.academicYearId;
+
+    // For models using academicYear as String (MonthlyPayment)
+    const stringAcademicMatch = { ...baseMatch };
+    if (req.academicYearName) stringAcademicMatch.academicYear = req.academicYearName;
 
     const attendance = await Attendance.find({ 
       user: student._id,
-      ...academicMatch
+      ...objectIdAcademicMatch
     }).populate('subject', 'name').sort({ date: -1 });
     
     const payments = await MonthlyPayment.find({ 
       student: student._id,
-      ...academicMatch
+      ...stringAcademicMatch
     }).sort({ year: 1, createdAt: 1 });
 
     const discountHistory = await DiscountAssignment.find({
@@ -359,7 +367,7 @@ export const getStudentProfile = async (req, res) => {
 
     const marks = await Mark.find({ 
       student: student._id,
-      ...academicMatch
+      ...objectIdAcademicMatch
     }).populate('subject', 'name code').sort({ createdAt: -1 });
 
     // --- Academic Ranking Logic ---
@@ -1365,7 +1373,7 @@ export const createExam = async (req, res) => {
       maxMarks,
       school: schoolId,
       branch: targetBranchId,
-      academicYear: req.academicYearName,
+      academicYear: req.academicYearId,
     });
     res.status(201).json(exam);
   } catch (error) {
@@ -2731,8 +2739,24 @@ export const createSubject = async (req, res) => {
     }
     
     // Resolve branch and academic year automatically
-    const branchId = await resolveBranchId(req);
-    const academicYearId = req.academicYearId || (await getCurrentAcademicYear(req.user.school))?._id;
+    let branchId = await resolveBranchId(req);
+    // If branchId is null (school admin all branches), resolve to main branch
+    if (!branchId) {
+      const schoolId = req.schoolId || req.user.school;
+      const mainBranch = await resolveBranch(schoolId, req.user?._id);
+      branchId = mainBranch._id;
+    }
+    let academicYearId = req.academicYearId;
+    if (!academicYearId) {
+      const acYear = await getCurrentAcademicYear(req.user.school, branchId);
+      academicYearId = acYear?._id;
+    }
+    if (!academicYearId) {
+      return res.status(400).json({ 
+        message: 'No academic year found or created', 
+        userMessage: 'Please create an academic year first.' 
+      });
+    }
     
     // Check for duplicate code (case-insensitive)
     const existingSubject = await Subject.findOne({ 

@@ -13,7 +13,7 @@ const attendanceSchema = new mongoose.Schema(
     subject: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true },
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
-    academicYear: { type: String, required: true, index: true },
+    academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     markedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Who marked the attendance
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     isDeleted: { type: Boolean, default: false },

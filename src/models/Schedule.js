@@ -13,7 +13,7 @@ const scheduleSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  academicYear: { type: String, required: true, index: true },
+  academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
   class: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Class',

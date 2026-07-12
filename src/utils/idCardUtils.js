@@ -187,6 +187,8 @@ export const generateIDCardHTML = async (idCard, design, school) => {
   const qrPayload = idCard.qrCodeData || generateQrDataString(idCard, school);
   const qrValue = typeof qrPayload === 'string' ? qrPayload : JSON.stringify(qrPayload);
 
+  console.log('Generating ID Card HTML with QR data:', qrValue.substring(0, 100) + '...');
+
   const [schoolLogoSrc, userPhotoSrc, qrCodeSrc] = await Promise.all([
     toPrintableAsset(schoolData.logo),
     toPrintableAsset(user.photo),
@@ -198,8 +200,13 @@ export const generateIDCardHTML = async (idCard, design, school) => {
         dark: '#1e293b',
         light: '#ffffff',
       },
+    }).catch(err => {
+      console.error('QR Code generation failed:', err);
+      return null;
     }),
   ]);
+
+  console.log('QR Code generated:', qrCodeSrc ? 'Success' : 'Failed');
 
   const cardHolderName = escapeHtml(user.name || 'Student Name');
   const schoolName = escapeHtml(schoolData.name || 'School');

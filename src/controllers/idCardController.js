@@ -121,7 +121,7 @@ export const generateIDCard = async (req, res) => {
 
     console.log('Step 9: Generate QR data...');
     idCard.generateQrData(school);
-    console.log('QR data generated');
+    console.log('QR data generated:', JSON.stringify(idCard.qrCodeData).substring(0, 200) + '...');
     
     console.log('Step 10: Set verification URL...');
     if (school.settings?.idCard?.verificationBaseUrl) {

@@ -338,6 +338,25 @@ export const injectBranch = async (req, res, next) => {
 
 
 /**
+ * Helper function to resolve branch ID for a request
+ */
+export const resolveBranchId = async (req) => {
+  // If explicitly set to null (ALL_BRANCHES), return null
+  if (req.branchId === null) {
+    return null;
+  }
+  
+  let branchId = req.branchId || req.user?.branch;
+  
+  if (!branchId) {
+    const schoolId = req.schoolId || req.user.school?._id || req.user.school;
+    const branch = await resolveBranch(schoolId, req.user?._id);
+    branchId = branch._id;
+  }
+  return branchId;
+};
+
+/**
  * Ownership Middleware
  * Automatically injects tenantId (school), branchId, and academicYearId into req.body for creations.
  */

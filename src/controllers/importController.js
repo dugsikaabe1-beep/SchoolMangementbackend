@@ -511,12 +511,12 @@ export const importExamResults = async (req, res) => {
   // Resolve branch ID
   const branchId = await resolveBranchId(req);
 
-  // Resolve academic year
-  let academicYearName = req.academicYearName;
-  if (!academicYearName) {
+  // Resolve academic year ID
+  let academicYearId = req.academicYearId;
+  if (!academicYearId) {
     const academicYear = await getCurrentAcademicYear(schoolId, branchId);
     if (academicYear) {
-      academicYearName = academicYear.name;
+      academicYearId = academicYear._id;
     }
   }
 
@@ -590,7 +590,7 @@ export const importExamResults = async (req, res) => {
         exam: examId,
         school: schoolId,
         branch: branchId,
-        academicYear: academicYearName,
+        academicYear: academicYearId,
         score,
         term
       });
