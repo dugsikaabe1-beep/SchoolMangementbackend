@@ -6,6 +6,7 @@ import Class from '../models/Class.js';
 import Subject from '../models/Subject.js';
 import AcademicYear from '../models/AcademicYear.js';
 import { logAction } from '../utils/auditLogger.js';
+import { sendNotification } from '../utils/notificationService.js';
 import { getRedisClient } from '../config/redis.js';
 import crypto from 'crypto';
 
@@ -326,6 +327,21 @@ export const verifyQRAttendance = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Attendance already marked for this session' });
   }
 
+  // Notify student of successful check-in
+  sendNotification({
+    recipientId: req.user._id,
+    schoolId: req.schoolId,
+    branchId: req.branchId,
+    title: 'Attendance Recorded',
+    message: `Your attendance has been recorded for today. Check-in time: ${new Date().toLocaleTimeString()}`,
+    type: 'attendance',
+    priority: 'low',
+    actionLink: '/attendance',
+    metadata: { attendanceId: attendance._id, type: 'check_in', method: 'QR' },
+    channels: ['in_app'],
+    createdBy: req.user._id
+  }).catch(() => {});
+
   qrTokenData.usedBy = qrTokenData.usedBy || [];
   qrTokenData.usedBy.push({ userId, usedAt: new Date().toISOString() });
   qrTokenData.usageCount = (qrTokenData.usageCount || 0) + 1;
@@ -384,7 +400,32 @@ export const checkOutQR = asyncHandler(async (req, res) => {
   attendance.checkOutTime = new Date();
   if (location) attendance.location = location;
   if (deviceInfo) attendance.deviceInfo = deviceInfo;
+
+  const checkIn = new Date(attendance.checkInTime);
+  const checkOut = new Date();
+  const durationHours = (checkOut - checkIn) / (1000 * 60 * 60);
+  const minSchoolHours = 4;
+  if (durationHours < minSchoolHours && attendance.status !== 'Late') {
+    attendance.status = 'Early_Leave';
+  }
+
   await attendance.save();
+
+  // Notify student of check-out
+  const totalMinutes = Math.round((new Date() - new Date(attendance.checkInTime)) / 60000);
+  sendNotification({
+    recipientId: attendance.user,
+    schoolId: req.schoolId,
+    branchId: req.branchId,
+    title: 'Check-Out Recorded',
+    message: `Your check-out has been recorded. Total time: ${totalMinutes} minutes.`,
+    type: 'attendance',
+    priority: 'low',
+    actionLink: '/attendance',
+    metadata: { attendanceId: attendance._id, type: 'check_out', method: 'QR' },
+    channels: ['in_app'],
+    createdBy: req.user._id
+  }).catch(() => {});
 
   await logAction(req, {
     action: 'QR_ATTENDANCE_CHECKOUT',
@@ -420,12 +461,13 @@ export const revokeQR = asyncHandler(async (req, res) => {
 });
 
 export const getQRAttendanceHistory = asyncHandler(async (req, res) => {
-  const { classId, subjectId, startDate, endDate, studentId, status, page = 1, limit = 50 } = req.query;
+  const { classId, subjectId, startDate, endDate, studentId, status, sectionId, page = 1, limit = 50 } = req.query;
 
   const query = { school: req.schoolId, method: 'QR', isDeleted: false };
 
   if (req.branchId) query.branch = req.branchId;
   if (classId) query.class = classId;
+  if (sectionId) query.section = sectionId;
   if (subjectId) query.subject = subjectId;
   if (studentId) query.user = studentId;
   if (status) query.status = status;
@@ -1550,11 +1592,15 @@ export const registerFaceData = asyncHandler(async (req, res) => {
 });
 
 export const verifyFaceAttendance = asyncHandler(async (req, res) => {
-  const { faceEmbeddings, location, deviceInfo, classId, subjectId } = req.body;
+  // Accept both array form (faceEmbeddings) and single-vector form (faceDescriptor)
+  const rawEmbeddings = req.body.faceEmbeddings || (req.body.faceDescriptor ? [req.body.faceDescriptor] : null);
+  const { location, deviceInfo, classId, subjectId, userId: hintUserId } = req.body;
 
-  if (!faceEmbeddings || !Array.isArray(faceEmbeddings) || faceEmbeddings.length === 0) {
-    return res.status(400).json({ success: false, message: 'faceEmbeddings array is required' });
+  if (!rawEmbeddings || !Array.isArray(rawEmbeddings) || rawEmbeddings.length === 0) {
+    return res.status(400).json({ success: false, message: 'faceEmbeddings (or faceDescriptor) array is required' });
   }
+
+  const faceEmbeddings = rawEmbeddings;
 
   const allUsers = await User.find({
     school: req.schoolId,
@@ -2103,6 +2149,78 @@ export const activateFingerprint = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Fingerprint activated' });
 });
 
+export const getModuleAttendanceReport = asyncHandler(async (req, res) => {
+  const { method, classId, startDate, endDate, sectionId } = req.query;
+  if (!method) return res.status(400).json({ success: false, message: 'method query param is required (NFC, FINGERPRINT, FACE_RECOGNITION)' });
+
+  const query = { school: req.schoolId, method, isDeleted: false };
+  if (req.branchId) query.branch = req.branchId;
+  if (classId) query.class = classId;
+  if (sectionId) query.section = sectionId;
+  if (startDate && endDate) query.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
+
+  const [statusStats, dailyTrends, classBreakdown, topStudents] = await Promise.all([
+    Attendance.aggregate([
+      { $match: query },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]),
+    Attendance.aggregate([
+      { $match: query },
+      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } }, total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'Present'] }, 1, 0] } }, late: { $sum: { $cond: [{ $eq: ['$status', 'Late'] }, 1, 0] } } } },
+      { $sort: { _id: 1 } },
+      { $limit: 30 }
+    ]),
+    Attendance.aggregate([
+      { $match: query },
+      { $group: { _id: '$class', total: { $sum: 1 }, present: { $sum: { $cond: [{ $eq: ['$status', 'Present'] }, 1, 0] } } } },
+      { $lookup: { from: 'classes', localField: '_id', foreignField: '_id', as: 'classInfo' } },
+      { $unwind: { path: '$classInfo', preserveNullAndEmptyArrays: true } },
+      { $project: { name: '$classInfo.name', total: 1, present: 1 } }
+    ]),
+    Attendance.aggregate([
+      { $match: { ...query, status: { $in: ['Present', 'Late'] } } },
+      { $group: { _id: '$user', count: { $sum: 1 } } },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'userInfo' } },
+      { $unwind: '$userInfo' },
+      { $project: { name: '$userInfo.name', customId: '$userInfo.customId', count: 1 } },
+      { $sort: { count: -1 } },
+      { $limit: 10 }
+    ])
+  ]);
+
+  const totalRecords = await Attendance.countDocuments(query);
+  const uniqueUsers = await Attendance.distinct('user', query);
+
+  res.json({
+    success: true,
+    report: {
+      method,
+      totalRecords,
+      uniqueUsers: uniqueUsers.length,
+      statusBreakdown: statusStats.reduce((acc, s) => { acc[s._id] = s.count; return acc; }, {}),
+      dailyTrends,
+      classBreakdown,
+      topStudents,
+      dateRange: { startDate: startDate || 'all', endDate: endDate || 'all' }
+    }
+  });
+});
+
+export const validateGeofence = asyncHandler(async (req, res) => {
+  const { latitude, longitude, schoolLat, schoolLng, radiusMeters = 500 } = req.body;
+  if (!latitude || !longitude || !schoolLat || !schoolLng) {
+    return res.status(400).json({ success: false, message: 'latitude, longitude, schoolLat, schoolLng are required' });
+  }
+  const R = 6371000;
+  const dLat = (schoolLat - latitude) * Math.PI / 180;
+  const dLon = (schoolLng - longitude) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(latitude * Math.PI / 180) * Math.cos(schoolLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const withinGeofence = distance <= radiusMeters;
+
+  res.json({ success: true, withinGeofence, distance: Math.round(distance), radiusMeters });
+});
+
 export default {
   generateAttendanceQR,
   verifyQRAttendance,
@@ -2117,6 +2235,8 @@ export default {
   getAttendanceMethodStats,
   getAttendanceByMethod,
   exportAttendance,
+  getModuleAttendanceReport,
+  validateGeofence,
   registerRFIDTag,
   verifyRFIDAttendance,
   getRFIDRegistrationStatus,
@@ -2146,3 +2266,169 @@ export default {
   deactivateFingerprint,
   activateFingerprint
 };
+
+// ── Face: replace / deactivate / activate ────────────────────────────────────
+export const replaceFaceData = asyncHandler(async (req, res) => {
+  const { userId, faceEmbeddings } = req.body;
+  if (!userId || !faceEmbeddings || !Array.isArray(faceEmbeddings) || faceEmbeddings.length === 0) {
+    return res.status(400).json({ success: false, message: 'userId and faceEmbeddings array are required' });
+  }
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+
+  targetUser.verificationData = targetUser.verificationData || {};
+  targetUser.verificationData.faceEmbeddings = faceEmbeddings;
+  targetUser.verificationData.faceRegisteredAt = new Date();
+  targetUser.verificationData.faceStatus = 'active';
+  targetUser.verificationData.faceEnrollmentCount = faceEmbeddings.length;
+  await targetUser.save();
+
+  await logAction(req, { action: 'FACE_DATA_REPLACED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'Face data replaced successfully' });
+});
+
+export const deactivateFaceData = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  targetUser.verificationData = targetUser.verificationData || {};
+  targetUser.verificationData.faceStatus = 'inactive';
+  await targetUser.save();
+  await logAction(req, { action: 'FACE_DATA_DEACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'Face data deactivated' });
+});
+
+export const activateFaceData = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  if (!targetUser.verificationData?.faceEmbeddings?.length) {
+    return res.status(400).json({ success: false, message: 'No face data to activate' });
+  }
+  targetUser.verificationData.faceStatus = 'active';
+  await targetUser.save();
+  await logAction(req, { action: 'FACE_DATA_ACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'Face data activated' });
+});
+
+// ── Fingerprint: replace / deactivate / activate ──────────────────────────────
+export const replaceFingerprint = asyncHandler(async (req, res) => {
+  const { userId, fingerprintTemplate, fingerIndex = 0 } = req.body;
+  if (!userId || !fingerprintTemplate) {
+    return res.status(400).json({ success: false, message: 'userId and fingerprintTemplate are required' });
+  }
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+
+  targetUser.verificationData = targetUser.verificationData || {};
+  const fingerprints = targetUser.verificationData.fingerprints || [];
+  const idx = fingerprints.findIndex(f => f.fingerIndex === fingerIndex);
+  if (idx >= 0) {
+    fingerprints[idx].template = fingerprintTemplate;
+    fingerprints[idx].enrolledAt = new Date();
+    fingerprints[idx].status = 'active';
+  } else {
+    fingerprints.push({ fingerIndex, template: fingerprintTemplate, enrolledAt: new Date(), status: 'active' });
+  }
+  targetUser.verificationData.fingerprints = fingerprints;
+  targetUser.verificationData.fingerprintStatus = 'active';
+  await targetUser.save();
+
+  await logAction(req, { action: 'FINGERPRINT_REPLACED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId, fingerIndex } });
+  res.json({ success: true, message: 'Fingerprint replaced successfully' });
+});
+
+export const deactivateFingerprint = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  targetUser.verificationData = targetUser.verificationData || {};
+  targetUser.verificationData.fingerprintStatus = 'inactive';
+  await targetUser.save();
+  await logAction(req, { action: 'FINGERPRINT_DEACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'Fingerprint deactivated' });
+});
+
+export const activateFingerprint = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  if (!targetUser.verificationData?.fingerprints?.length) {
+    return res.status(400).json({ success: false, message: 'No fingerprint data to activate' });
+  }
+  targetUser.verificationData.fingerprintStatus = 'active';
+  await targetUser.save();
+  await logAction(req, { action: 'FINGERPRINT_ACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'Fingerprint activated' });
+});
+
+// ── Module attendance report ───────────────────────────────────────────────────
+export const getModuleAttendanceReport = asyncHandler(async (req, res) => {
+  const { module: mod, classId, startDate, endDate } = req.query;
+  const query = { school: req.schoolId, isDeleted: false };
+  if (req.branchId) query.branch = req.branchId;
+  if (classId) query.class = classId;
+  if (mod) query.method = mod.toUpperCase();
+  if (startDate && endDate) {
+    query.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
+  }
+  const stats = await Attendance.aggregate([
+    { $match: query },
+    { $group: {
+      _id: { date: { $dateToString: { format: '%Y-%m-%d', date: '$date' } }, status: '$status' },
+      count: { $sum: 1 }
+    }},
+    { $sort: { '_id.date': 1 } }
+  ]);
+  res.json({ success: true, data: stats });
+});
+
+// ── Geofence validation ────────────────────────────────────────────────────────
+export const validateGeofence = asyncHandler(async (req, res) => {
+  const { latitude, longitude, schoolId } = req.body;
+  if (!latitude || !longitude) {
+    return res.status(400).json({ success: false, message: 'latitude and longitude are required' });
+  }
+  // Default school radius: 500 metres. In a real deployment, store school coordinates in School model.
+  const school = await (await import('../models/School.js')).default.findById(req.schoolId).select('address location');
+  if (!school?.location?.coordinates) {
+    // No geofence configured — allow all
+    return res.json({ success: true, isInsideGeofence: true, message: 'Geofence not configured, access granted' });
+  }
+  const [sLng, sLat] = school.location.coordinates;
+  const R = 6371000; // metres
+  const dLat = ((latitude - sLat) * Math.PI) / 180;
+  const dLon = ((longitude - sLng) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((sLat * Math.PI) / 180) * Math.cos((latitude * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const radius = school.geofenceRadius || 500;
+  const isInside = distance <= radius;
+  res.json({ success: true, isInsideGeofence: isInside, distance: Math.round(distance), allowedRadius: radius });
+});
+
+// ── NFC deactivate / activate ─────────────────────────────────────────────────
+export const deactivateNFCCard = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  targetUser.verificationData = targetUser.verificationData || {};
+  targetUser.verificationData.nfcStatus = 'inactive';
+  await targetUser.save();
+  await logAction(req, { action: 'NFC_CARD_DEACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'NFC card deactivated' });
+});
+
+export const activateNFCCard = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false });
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  if (!targetUser.verificationData?.nfcId) {
+    return res.status(400).json({ success: false, message: 'No NFC ID to activate' });
+  }
+  targetUser.verificationData.nfcStatus = 'active';
+  await targetUser.save();
+  await logAction(req, { action: 'NFC_CARD_ACTIVATED', module: 'ATTENDANCE', targetId: targetUser._id, details: { userId } });
+  res.json({ success: true, message: 'NFC card activated' });
+});

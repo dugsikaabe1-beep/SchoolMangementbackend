@@ -6,10 +6,11 @@ const attendanceSchema = new mongoose.Schema(
     date: { type: Date, required: true },
     status: {
       type: String,
-      enum: ['Present', 'Absent', 'Late', 'Excused'],
+      enum: ['Present', 'Absent', 'Late', 'Excused', 'Early_Leave'],
       default: 'Present',
     },
     class: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', required: true },
+    section: { type: mongoose.Schema.Types.ObjectId, ref: 'Section' },
     subject: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true },
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
     branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
@@ -28,7 +29,9 @@ const attendanceSchema = new mongoose.Schema(
     location: {
       latitude: Number,
       longitude: Number,
-      accuracy: Number
+      accuracy: Number,
+      geofenceValid: { type: Boolean, default: null },
+      distanceFromSchool: Number
     },
     deviceInfo: {
       type: String,

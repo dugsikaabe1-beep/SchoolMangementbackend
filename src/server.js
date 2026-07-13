@@ -8,6 +8,7 @@ import { initPaymentScheduler } from './services/paymentScheduler.js';
 import { initPaymentReminders } from './services/paymentReminderService.js';
 import { initSubscriptionChecker } from './services/subscriptionChecker.js';
 import { scheduleAllTenantBackups } from './services/backupService.js';
+import { initExamAutoSubmit } from './services/examAutoSubmit.js';
 import { initSocket } from './utils/socket.js';
 import { initRedis, shutdownRedis } from './config/redis.js';
 import seedSuperAdmin from './scripts/seedSuperAdmin.js';
@@ -54,6 +55,9 @@ const startServer = async () => {
     
     // Initialize scheduled backups
     scheduleAllTenantBackups(mongoose);
+
+    // Initialize exam auto-submit checker for expired sessions
+    initExamAutoSubmit();
     
     // Check port availability before starting to prevent duplicate instances
     const isPortFree = await new Promise(async (resolve) => {

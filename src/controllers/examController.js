@@ -4,6 +4,7 @@ import QuestionBank from '../models/QuestionBank.js';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import { logAction } from '../utils/auditLogger.js';
+import { sendNotification } from '../utils/notificationService.js';
 
 /**
  * Question Bank Controllers
@@ -788,6 +789,21 @@ export const submitExam = asyncHandler(async (req, res) => {
   
   examResult.responses = gradedResponses;
   await examResult.submitExam();
+
+  // Notify student of exam submission
+  sendNotification({
+    recipientId: req.user._id,
+    schoolId: req.schoolId,
+    branchId: req.branchId,
+    title: 'Exam Submitted',
+    message: `Your exam "${examResult.exam?.name || 'Exam'}" has been submitted successfully. Score: ${examResult.score}/${examResult.maxScore}`,
+    type: 'exam',
+    priority: 'normal',
+    actionLink: '/exam-results',
+    metadata: { examId: examResult.exam?._id || examResult.exam, resultId: examResult._id, score: examResult.score },
+    channels: ['in_app'],
+    createdBy: req.user._id
+  }).catch(() => {});
   
   await logAction(req, {
     action: 'EXAM_SUBMITTED',
@@ -1398,6 +1414,24 @@ export const publishExamResults = asyncHandler(async (req, res) => {
     $set: { published: true, publishedAt: new Date(), publishedBy: req.user._id }
   });
 
+  // Notify all affected students
+  const affectedStudents = [...new Set(results.map(r => r.student?.toString() || r.student))];
+  for (const studentId of affectedStudents) {
+    sendNotification({
+      recipientId: studentId,
+      schoolId: req.schoolId,
+      branchId: req.branchId,
+      title: 'Exam Results Published',
+      message: `Your results for the exam have been published. Check your dashboard for details.`,
+      type: 'exam',
+      priority: 'high',
+      actionLink: '/exam-results',
+      metadata: { examId, publishedCount: results.length },
+      channels: ['in_app'],
+      createdBy: req.user._id
+    }).catch(() => {});
+  }
+
   await logAction(req, {
     action: 'RESULTS_PUBLISHED',
     module: 'EXAMS',
@@ -1447,6 +1481,70 @@ export const bulkGradeExams = asyncHandler(async (req, res) => {
   res.json({ success: true, message: `${updated} exams graded`, count: updated });
 });
 
+export const restoreQuestion = asyncHandler(async (req, res) => {
+  const { questionId } = req.params;
+  const question = await Question.findOne({ _id: questionId, school: req.schoolId });
+  if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
+  question.status = 'ACTIVE';
+  question.isDeleted = false;
+  await question.save();
+  res.json({ success: true, message: 'Question restored', data: question });
+});
+
+export const archiveQuestion = asyncHandler(async (req, res) => {
+  const { questionId } = req.params;
+  const question = await Question.findOne({ _id: questionId, school: req.schoolId });
+  if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
+  question.status = 'ARCHIVED';
+  await question.save();
+  res.json({ success: true, message: 'Question archived', data: question });
+});
+
+export const importQuestionsFromCSV = asyncHandler(async (req, res) => {
+  const { questions, bankId } = req.body;
+  if (!questions || !Array.isArray(questions) || questions.length === 0) {
+    return res.status(400).json({ success: false, message: 'questions array is required' });
+  }
+  const created = await Question.insertMany(questions.map(q => ({
+    ...q,
+    school: req.schoolId,
+    branch: req.branchId,
+    academicYear: req.academicYearId,
+    createdBy: req.user._id,
+    questionBank: bankId || undefined
+  })));
+  res.json({ success: true, message: `${created.length} questions imported`, data: { count: created.length } });
+});
+
+export const getMeritList = asyncHandler(async (req, res) => {
+  const { examId, classId, limit: topN = 50 } = req.query;
+  if (!examId) return res.status(400).json({ success: false, message: 'examId is required' });
+
+  const query = { exam: examId, school: req.schoolId, isDeleted: false };
+  if (req.branchId) query.branch = req.branchId;
+  if (classId) query.class = classId;
+
+  const results = await ExamResult.find(query)
+    .populate('student', 'name customId class')
+    .populate('class', 'name')
+    .sort({ percentage: -1, score: -1 })
+    .limit(parseInt(topN));
+
+  const meritList = results.map((r, idx) => ({
+    rank: idx + 1,
+    student: r.student,
+    score: r.score,
+    maxScore: r.maxScore,
+    percentage: r.percentage,
+    grade: r.grade,
+    gpa: r.gpa,
+    class: r.class,
+    attemptNumber: r.attemptNumber
+  }));
+
+  res.json({ success: true, meritList, total: results.length });
+});
+
 export default {
   createQuestionBank,
   getQuestionBanks,
@@ -1479,5 +1577,9 @@ export default {
   calculateStudentGPA,
   calculateStudentCGPA,
   publishExamResults,
-  bulkGradeExams
+  bulkGradeExams,
+  restoreQuestion,
+  archiveQuestion,
+  importQuestionsFromCSV,
+  getMeritList
 };

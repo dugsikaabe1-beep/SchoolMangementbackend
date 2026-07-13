@@ -31,7 +31,11 @@ import {
   calculateStudentGPA,
   calculateStudentCGPA,
   publishExamResults,
-  bulkGradeExams
+  bulkGradeExams,
+  restoreQuestion,
+  archiveQuestion,
+  importQuestionsFromCSV,
+  getMeritList
 } from '../controllers/examController.js';
 import { protect } from '../middlewares/authMiddleware.js';
 import { asyncHandler } from '../middlewares/asyncHandler.js';
@@ -57,6 +61,9 @@ router.post('/questions/bulk', protect, asyncHandler(bulkCreateQuestions));
 router.get('/questions/:id', protect, asyncHandler(getQuestionById));
 router.put('/questions/:id', protect, asyncHandler(updateQuestion));
 router.delete('/questions/:id', protect, asyncHandler(deleteQuestion));
+router.put('/questions/:questionId/restore', protect, asyncHandler(restoreQuestion));
+router.put('/questions/:questionId/archive', protect, asyncHandler(archiveQuestion));
+router.post('/questions/import', protect, asyncHandler(importQuestionsFromCSV));
 
 // Exam Routes
 router.post('/exams', protect, asyncHandler(createExam));
@@ -76,6 +83,9 @@ router.get('/exam-results/:id', protect, asyncHandler(getExamResultById));
 router.post('/exam-results/:examResultId/grade', protect, asyncHandler(gradeExam));
 router.post('/exam-results/bulk-grade', protect, asyncHandler(bulkGradeExams));
 router.post('/exam-results/:examId/publish', protect, asyncHandler(publishExamResults));
+
+// Merit List
+router.get('/exam-results/merit-list', protect, asyncHandler(getMeritList));
 
 // Analytics & Rankings
 router.get('/exams/:examId/analytics', protect, asyncHandler(getExamAnalytics));

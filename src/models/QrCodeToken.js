@@ -72,13 +72,13 @@ const qrCodeTokenSchema = new mongoose.Schema(
     branch: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Branch',
-      required: true,
+      required: false,
       index: true
     },
     academicYear: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'AcademicYear',
-      required: true,
+      required: false,
       index: true
     },
     createdBy: {

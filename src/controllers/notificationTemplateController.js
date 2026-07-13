@@ -361,6 +361,46 @@ export const seedSystemTemplates = asyncHandler(async (req, res) => {
       placeholders: ['parentName', 'eventName', 'eventDate', 'eventTime', 'schoolName'],
       type: 'all',
       isSystem: true
+    },
+    {
+      name: 'Exam Started',
+      code: 'exam_started',
+      category: 'academic',
+      subject: 'Exam Started: {{examName}}',
+      body: 'Dear {{studentName}},\n\nYour exam "{{examName}}" for {{subject}} has started. Duration: {{duration}} minutes. Good luck!\n\nThank you,\n{{schoolName}}',
+      placeholders: ['studentName', 'examName', 'subject', 'duration', 'schoolName'],
+      type: 'all',
+      isSystem: true
+    },
+    {
+      name: 'Exam Submitted',
+      code: 'exam_submitted',
+      category: 'academic',
+      subject: 'Exam Submitted: {{examName}}',
+      body: 'Dear {{studentName}},\n\nYour exam "{{examName}}" has been submitted successfully. Score: {{score}}/{{maxScore}}.\n\nThank you,\n{{schoolName}}',
+      placeholders: ['studentName', 'examName', 'score', 'maxScore', 'schoolName'],
+      type: 'all',
+      isSystem: true
+    },
+    {
+      name: 'Exam Auto-Submitted',
+      code: 'exam_auto_submitted',
+      category: 'academic',
+      subject: 'Exam Auto-Submitted: {{examName}}',
+      body: 'Dear {{studentName}},\n\nYour exam "{{examName}}" was automatically submitted because the time limit was reached. Score: {{score}}/{{maxScore}}.\n\nThank you,\n{{schoolName}}',
+      placeholders: ['studentName', 'examName', 'score', 'maxScore', 'schoolName'],
+      type: 'all',
+      isSystem: true
+    },
+    {
+      name: 'Attendance Recorded',
+      code: 'attendance_recorded',
+      category: 'attendance',
+      subject: 'Attendance Recorded',
+      body: 'Dear {{studentName}},\n\nYour {{method}} attendance has been recorded on {{date}} at {{time}}.\n\nThank you,\n{{schoolName}}',
+      placeholders: ['studentName', 'method', 'date', 'time', 'schoolName'],
+      type: 'all',
+      isSystem: true
     }
   ];
 

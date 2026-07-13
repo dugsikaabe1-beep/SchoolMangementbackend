@@ -13,6 +13,8 @@ import {
   getAttendanceMethodStats,
   getAttendanceByMethod,
   exportAttendance,
+  getModuleAttendanceReport,
+  validateGeofence,
   registerRFIDTag,
   verifyRFIDAttendance,
   getRFIDRegistrationStatus,
@@ -97,5 +99,7 @@ router.put('/fingerprint/activate/:userId', activateFingerprint);
 router.get('/stats/methods', getAttendanceMethodStats);
 router.get('/by-method', getAttendanceByMethod);
 router.get('/export', exportAttendance);
+router.get('/module-report', getModuleAttendanceReport);
+router.post('/geofence/validate', validateGeofence);
 
 export default router;

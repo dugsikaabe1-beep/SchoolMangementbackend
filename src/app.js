@@ -195,6 +195,30 @@ const authLimiter = rateLimit({
 });
 app.use('/api/auth/login', authLimiter);
 
+// Attendance Rate Limiting - Prevent duplicate check-ins
+const attendanceLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  skip: (req) => req.method === 'OPTIONS',
+  message: {
+    success: false,
+    message: 'Too many attendance requests, please wait a moment'
+  }
+});
+app.use('/api/attendance', attendanceLimiter);
+
+// Exam Submission Rate Limiting - Prevent rapid-fire submissions
+const examSubmitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  skip: (req) => req.method === 'OPTIONS' || req.method === 'GET',
+  message: {
+    success: false,
+    message: 'Too many exam submission requests, please wait'
+  }
+});
+app.use('/api/exams/results', examSubmitLimiter);
+
 // Prevent MongoDB Injection
 app.use(mongoSanitize());
 
