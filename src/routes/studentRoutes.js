@@ -63,7 +63,7 @@ router.get('/payment-methods', asyncHandler(getStudentPaymentMethods));
 router.post('/payments/initiate', checkSubscription, asyncHandler(initiateStudentPayment));
 router.get('/payments/verify/:transactionId', asyncHandler(verifyStudentPayment));
 router.get('/transactions', asyncHandler(getStudentTransactionHistory));
-router.post('/payments/instructions/:providerId', asyncHandler(getStudentPaymentInstructions));
+router.post('/payments/instructions/:providerId', checkSubscription, asyncHandler(getStudentPaymentInstructions));
 // ────────────────────────────────────────────────────────────────
 
 // Legacy routes (kept for backward compat)

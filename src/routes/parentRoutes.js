@@ -43,11 +43,11 @@ parentRouter.get('/children/:studentId/timetable', asyncHandler(getChildTimetabl
 parentRouter.get('/announcements', asyncHandler(getParentAnnouncements));
 // Payment endpoints
 parentRouter.get('/children/:studentId/payment-methods', asyncHandler(getParentPaymentMethods));
-parentRouter.post('/children/:studentId/payments/initiate', asyncHandler(initiateParentPayment));
+parentRouter.post('/children/:studentId/payments/initiate', checkSubscription, asyncHandler(initiateParentPayment));
 parentRouter.get('/children/:studentId/payments/verify/:transactionId', asyncHandler(verifyParentPayment));
 parentRouter.get('/children/:studentId/transactions', asyncHandler(getParentTransactionHistory));
 parentRouter.post('/children/:studentId/payments/instructions/:providerId', asyncHandler(getParentPaymentInstructions));
-parentRouter.put('/children/:studentId/my-payments/:id/pay', asyncHandler(payChildMonthlyFee));
+parentRouter.put('/children/:studentId/my-payments/:id/pay', checkSubscription, asyncHandler(payChildMonthlyFee));
 
 // Use the parent router for all routes except /link
 router.use('/', parentRouter);

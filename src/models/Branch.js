@@ -27,6 +27,10 @@ const branchSchema = new mongoose.Schema(
     otpExpires: { type: Date },
     otpAttempts: { type: Number, default: 0 },
     
+    // Account lockout (brute-force protection)
+    loginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date },
+    
     // RBAC: Role reference for branch-specific permissions
     rbacRole: {
       type: mongoose.Schema.Types.ObjectId,

@@ -24,7 +24,7 @@ const userSchema = new mongoose.Schema(
       min: [0, 'Monthly fees cannot be negative'],
       default: 0
     },
-    email: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
+    email: { type: String, sparse: true, lowercase: true, trim: true },
     customId: { type: String, sparse: true }, // For Student ID or Teacher ID (Unique per tenant)
     password: { type: String, required: false }, // Optional: null when credentialsGenerated=false (delayed mode)
     credentialsGenerated: { type: Boolean, default: true }, // false = imported without credentials (Mode B)
@@ -232,7 +232,7 @@ userSchema.post('init', function() {
 // Indexes for better performance (avoid duplicate single-field indexes on school/class)
 userSchema.index({ role: 1 });
 userSchema.index({ status: 1 });
-userSchema.index({ school: 1, email: 1 });
+userSchema.index({ school: 1, email: 1 }, { unique: true, sparse: true });
 userSchema.index({ school: 1, customId: 1 }, { unique: true, sparse: true });
 userSchema.index({ school: 1, branch: 1, role: 1 });
 userSchema.index({ school: 1, branch: 1, isDeleted: 1 });
@@ -241,6 +241,10 @@ userSchema.index({ linkedStudents: 1 });
 
 // Encrypt password before saving (only if password is set)
 userSchema.pre('save', async function () {
+  // Limit loginHistory to last 50 entries to prevent unbounded growth
+  if (this.loginHistory && this.loginHistory.length > 50) {
+    this.loginHistory = this.loginHistory.slice(-50);
+  }
   if (!this.isModified('password') || !this.password) {
     return;
   }

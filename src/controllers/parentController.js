@@ -8,6 +8,7 @@ import PaymentSettings from '../models/PaymentSettings.js';
 import Transaction from '../models/Transaction.js';
 import PaymentService from '../services/PaymentService.js';
 import { activeOnly } from '../utils/queryUtils.js';
+import { logAction } from '../utils/auditLogger.js';
 
 const ensureParentAccess = async (req, studentId) => {
   const branchId = req.branchId || req.user.branch?._id || req.user.branch;
@@ -49,7 +50,7 @@ export const getParentChildren = async (req, res) => {
 
     res.json({ success: true, data: parent.linkedStudents || [] });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load children. Please try again.' });
   }
 };
 
@@ -59,7 +60,7 @@ export const getChildProfile = async (req, res) => {
     if (error) return res.status(error.status).json({ success: false, message: error.message });
     res.json({ success: true, data: student });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load student profile. Please try again.' });
   }
 };
 
@@ -80,7 +81,7 @@ export const getChildAttendance = async (req, res) => {
 
     res.json({ success: true, data: records });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load attendance records. Please try again.' });
   }
 };
 
@@ -102,7 +103,7 @@ export const getChildResults = async (req, res) => {
 
     res.json({ success: true, data: marks });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load results. Please try again.' });
   }
 };
 
@@ -123,7 +124,7 @@ export const getChildFees = async (req, res) => {
 
     res.json({ success: true, data: payments });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load fee records. Please try again.' });
   }
 };
 
@@ -148,7 +149,7 @@ export const getChildTimetable = async (req, res) => {
 
     res.json({ success: true, data: schedules });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load timetable. Please try again.' });
   }
 };
 
@@ -184,7 +185,7 @@ export const getParentAnnouncements = async (req, res) => {
 
     res.json({ success: true, data: announcements });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to load announcements. Please try again.' });
   }
 };
 
@@ -222,8 +223,9 @@ export const linkParentToStudents = async (req, res) => {
     await parent.save();
 
     res.json({ success: true, data: parent.linkedStudents });
+    logAction(req, { action: 'LINK_PARENT_STUDENTS', module: 'PARENT', targetId: parentId, details: { studentCount: validStudents.length } });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    res.status(400).json({ success: false, message: 'An error occurred.', userMessage: 'Failed to link students. Please try again.' });
   }
 };
 
@@ -250,7 +252,7 @@ export const getParentPaymentMethods = async (req, res) => {
 
     res.json({ providers: enabledProviders });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load payment methods. Please try again.' });
   }
 };
 
@@ -307,8 +309,9 @@ export const initiateParentPayment = async (req, res) => {
     });
 
     res.json(paymentResult);
+    logAction(req, { action: 'INITIATE_PARENT_PAYMENT', module: 'PARENT_PAYMENTS', targetId: monthlyPayment._id, details: { providerId, amount: monthlyPayment.amount } });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to initiate payment. Please try again.' });
   }
 };
 
@@ -327,7 +330,7 @@ export const verifyParentPayment = async (req, res) => {
     const result = await PaymentService.verifyPayment(transactionId, schoolId);
     res.json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to verify payment. Please try again.' });
   }
 };
 
@@ -351,7 +354,7 @@ export const getParentTransactionHistory = async (req, res) => {
 
     res.json({ transactions });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load transaction history. Please try again.' });
   }
 };
 
@@ -385,7 +388,7 @@ export const getParentPaymentInstructions = async (req, res) => {
 
     res.json(instructions);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load payment instructions. Please try again.' });
   }
 };
 
@@ -435,8 +438,9 @@ export const payChildMonthlyFee = async (req, res) => {
     await mp.save();
 
     res.json({ message: 'Payment marked as paid successfully', success: true });
+    logAction(req, { action: 'PAY_CHILD_MONTHLY_FEE', module: 'PARENT_PAYMENTS', targetId: mp._id, details: { amount: mp.amount, month: mp.month, year: mp.year } });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to process payment. Please try again.' });
   }
 };
 

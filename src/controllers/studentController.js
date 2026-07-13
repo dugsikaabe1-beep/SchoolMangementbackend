@@ -13,6 +13,7 @@ import ExamSession from '../models/ExamSession.js';
 import PaymentService from '../services/PaymentService.js';
 import PaymentSettings from '../models/PaymentSettings.js';
 import Transaction from '../models/Transaction.js';
+import { logAction } from '../utils/auditLogger.js';
 
 const getScope = (req) => ({
   schoolId: req.user.school?._id || req.user.school,
@@ -50,7 +51,7 @@ export const getStudentClassAndSubjects = async (req, res) => {
 
     res.json({ ...classData.toObject(), subjects });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -69,7 +70,7 @@ export const getStudentSchedule = async (req, res) => {
 
     res.json(schedules);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -85,7 +86,7 @@ export const getStudentAttendance = async (req, res) => {
     res.json(attendance);
   } catch (error) {
     res.status(500).json({ 
-      message: error.message,
+      message: 'An error occurred.',
       userMessage: 'Failed to fetch attendance. Please try again.'
     });
   }
@@ -204,7 +205,7 @@ export const getStudentResults = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -255,7 +256,7 @@ export const getMyMonthlyPayments = async (req, res) => {
       studentCustomId: req.user.customId || '',
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -280,7 +281,7 @@ export const getStudentPaymentMethods = async (req, res) => {
 
     res.json({ providers: enabledProviders });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load payment methods. Please try again.' });
   }
 };
 
@@ -292,6 +293,10 @@ export const initiateStudentPayment = async (req, res) => {
   try {
     const { schoolId, branchId } = getScope(req);
     const { monthlyPaymentId, providerId, studentId } = req.body;
+
+    if (!monthlyPaymentId || !providerId) {
+      return res.status(400).json({ message: 'monthlyPaymentId and providerId are required.' });
+    }
 
     // Validate student ID is mandatory
     if (!studentId) {
@@ -332,8 +337,9 @@ export const initiateStudentPayment = async (req, res) => {
     });
 
     res.json(paymentResult);
+    logAction(req, { action: 'INITIATE_PAYMENT', module: 'STUDENT_PAYMENTS', targetId: monthlyPayment._id, details: { providerId, amount: monthlyPayment.amount } });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to initiate payment. Please try again.' });
   }
 };
 
@@ -349,7 +355,7 @@ export const verifyStudentPayment = async (req, res) => {
     const result = await PaymentService.verifyPayment(transactionId, schoolId);
     res.json(result);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to verify payment. Please try again.' });
   }
 };
 
@@ -368,7 +374,7 @@ export const getStudentTransactionHistory = async (req, res) => {
 
     res.json({ transactions });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -399,7 +405,7 @@ export const getStudentPaymentInstructions = async (req, res) => {
 
     res.json(instructions);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -411,6 +417,10 @@ export const getStudentPaymentInstructions = async (req, res) => {
 export const payMonthlyFee = async (req, res) => {
   const { id } = req.params;
   const { studentId } = req.body; // The student ID entered in the UI (for confirmation)
+
+  if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
+    return res.status(400).json({ message: 'Invalid payment record ID.' });
+  }
 
   try {
     const { schoolId, branchId } = getScope(req);
@@ -456,8 +466,9 @@ export const payMonthlyFee = async (req, res) => {
     await PaymentMonth.findByIdAndUpdate(mp.paymentMonth, { paidCount, unpaidCount });
 
     res.json({ message: 'Payment successful', payment: mp });
+    logAction(req, { action: 'PAY_MONTHLY_FEE', module: 'STUDENT_PAYMENTS', targetId: mp._id, details: { amount: mp.amount, month: mp.month, year: mp.year } });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -474,13 +485,16 @@ export const getFeesDue = async (req, res) => {
       dueAmount: hasPaidCurrentMonth ? 0 : monthlyFee,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
 // --- Legacy: Pay Monthly Fees ---
 export const payMonthlyFees = async (req, res) => {
   const { amount, paymentMethod, month } = req.body;
+  if (!amount || isNaN(amount) || Number(amount) <= 0) {
+    return res.status(400).json({ message: 'A valid payment amount is required.' });
+  }
   try {
     const schoolId = req.user.school?._id || req.user.school;
     const payment = await Payment.create({
@@ -493,8 +507,9 @@ export const payMonthlyFees = async (req, res) => {
       transactionId: `TXN-${Date.now()}-${req.user._id.toString().slice(-4)}`,
     });
     res.status(201).json(payment);
+    logAction(req, { action: 'PAY_MONTHLY_FEES_LEGACY', module: 'STUDENT_PAYMENTS', targetId: payment._id, details: { amount, paymentMethod, month } });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({ message: 'Invalid request.', userMessage: 'Your request could not be processed. Please check your input.' });
   }
 };
 
@@ -505,7 +520,7 @@ export const getPaymentHistory = async (req, res) => {
     const history = await Payment.find({ student: req.user._id, school: schoolId }).sort({ date: -1 });
     res.json(history);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load payment history. Please try again.' });
   }
 };
 
@@ -674,6 +689,6 @@ export const getStudentDashboardStats = async (req, res) => {
       feesDue: remaining
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Failed to load dashboard data. Please try again.' });
   }
 };

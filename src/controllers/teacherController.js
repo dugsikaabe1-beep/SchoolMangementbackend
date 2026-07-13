@@ -7,6 +7,7 @@ import Mark from '../models/Mark.js';
 import Exam from '../models/Exam.js';
 import Schedule from '../models/Schedule.js';
 import ExamSession from '../models/ExamSession.js';
+import { logAction } from '../utils/auditLogger.js';
 
 const getScope = (req) => ({
   schoolId: req.user.school?._id || req.user.school,
@@ -39,7 +40,7 @@ export const getAssignedClasses = async (req, res) => {
     res.json(allAssignedClasses);
   } catch (error) {
     res.status(500).json({ 
-      message: error.message,
+      message: 'An error occurred.',
       userMessage: 'Failed to fetch assigned classes.'
     });
   }
@@ -50,6 +51,10 @@ export const takeAttendance = async (req, res) => {
   const { classId, subjectId, studentsAttendance, date } = req.body; 
   const { schoolId, branchId } = getScope(req);
   try {
+    if (!Array.isArray(studentsAttendance) || studentsAttendance.length === 0) {
+      return res.status(400).json({ message: 'studentsAttendance must be a non-empty array.' });
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -162,9 +167,10 @@ export const takeAttendance = async (req, res) => {
       message: 'Attendance recorded successfully',
       userMessage: 'Attendance recorded successfully.'
     });
+    logAction(req, { action: 'TAKE_ATTENDANCE', module: 'ATTENDANCE', targetId: classId, details: { subjectId, studentCount: attendanceRecords.length, absentCount: absentees.length } });
   } catch (error) {
     res.status(400).json({ 
-      message: error.message,
+      message: 'An error occurred.',
       userMessage: 'Something went wrong. Please try again.'
     });
   }
@@ -175,6 +181,21 @@ export const getClassAttendance = async (req, res) => {
   const { classId, subjectId, date } = req.params;
   const { schoolId, branchId } = getScope(req);
   try {
+    if (req.user.role === 'teacher') {
+      const assignment = await ClassSubject.findOne({
+        class: classId,
+        teacher: req.user._id,
+        school: schoolId,
+        branch: branchId,
+      });
+      if (!assignment) {
+        return res.status(403).json({ 
+          message: 'You are not assigned to this class',
+          userMessage: 'You are not authorized to view attendance for this class.'
+        });
+      }
+    }
+
     const query = {
       class: classId,
       date: {
@@ -194,7 +215,7 @@ export const getClassAttendance = async (req, res) => {
       .populate('subject', 'name');
     res.json(attendance);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -205,6 +226,15 @@ export const submitMarks = async (req, res) => {
   // examType: 'monthly1', 'midterm', 'monthly2', 'final'
   // studentMarks: [{ studentId, score, remarks }]
   try {
+    if (!Array.isArray(studentMarks) || studentMarks.length === 0) {
+      return res.status(400).json({ message: 'studentMarks must be a non-empty array.' });
+    }
+    for (const item of studentMarks) {
+      if (item.score !== undefined && (isNaN(item.score) || item.score < 0 || item.score > 100)) {
+        return res.status(400).json({ message: `Invalid score for student ${item.studentId}. Must be 0-100.` });
+      }
+    }
+
     // Validate examType
     const validExams = ['monthly1', 'midterm', 'monthly2', 'final'];
     if (!validExams.includes(examType)) {
@@ -308,8 +338,9 @@ export const submitMarks = async (req, res) => {
     }
 
     res.status(201).json({ message: `Marks for ${examType} submitted/updated successfully` });
+    logAction(req, { action: 'SUBMIT_MARKS', module: 'EXAMS', targetId: classId, details: { subjectId, examType, studentCount: studentMarks.length } });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({ message: 'Invalid request.', userMessage: 'Your request could not be processed. Please check your input.' });
   }
 };
 
@@ -318,6 +349,22 @@ export const getClassSubjectMarks = async (req, res) => {
   const { classId, subjectId } = req.params;
   const { schoolId, branchId } = getScope(req);
   try {
+    if (req.user.role === 'teacher') {
+      const assignment = await ClassSubject.findOne({
+        class: classId,
+        subject: subjectId,
+        teacher: req.user._id,
+        school: schoolId,
+        branch: branchId,
+      });
+      if (!assignment) {
+        return res.status(403).json({ 
+          message: 'You are not assigned to this subject in this class',
+          userMessage: 'You are not authorized to view marks for this class and subject.'
+        });
+      }
+    }
+
     const marks = await Mark.find({
       class: classId,
       subject: subjectId,
@@ -337,7 +384,7 @@ export const getClassSubjectMarks = async (req, res) => {
     });
     res.json(marksMap);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -346,6 +393,21 @@ export const getStudentsInClass = async (req, res) => {
   const { classId } = req.params;
   const { schoolId, branchId } = getScope(req);
   try {
+    if (req.user.role === 'teacher') {
+      const assignment = await ClassSubject.findOne({
+        class: classId,
+        teacher: req.user._id,
+        school: schoolId,
+        branch: branchId,
+      });
+      if (!assignment) {
+        return res.status(403).json({ 
+          message: 'You are not assigned to this class',
+          userMessage: 'You are not authorized to view students in this class.'
+        });
+      }
+    }
+
     const query = { role: 'student', class: classId, school: schoolId };
     if (branchId) query.branch = branchId;
     
@@ -354,7 +416,7 @@ export const getStudentsInClass = async (req, res) => {
     const students = await User.find(query);
     res.json(students);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -369,7 +431,7 @@ export const getTeacherSchedule = async (req, res) => {
 
     res.json(schedules);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -396,7 +458,7 @@ export const getTaughtSubjects = async (req, res) => {
     res.json(subjects);
   } catch (error) {
     res.status(500).json({ 
-      message: error.message,
+      message: 'An error occurred.',
       userMessage: 'Failed to fetch taught subjects.'
     });
   }
@@ -481,7 +543,7 @@ export const getExams = async (req, res) => {
 
     res.json(filteredExams);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -510,8 +572,9 @@ export const markExamAsPresent = async (req, res) => {
     exam.status = 'Present';
     await exam.save();
     res.json({ message: 'Exam marked as Present', exam });
+    logAction(req, { action: 'MARK_EXAM_PRESENT', module: 'EXAMS', targetId: exam._id });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };
 
@@ -554,7 +617,8 @@ export const requestExam = async (req, res) => {
       userMessage: 'Your exam request has been submitted for admin approval.',
       exam
     });
+    logAction(req, { action: 'REQUEST_EXAM', module: 'EXAMS', targetId: exam._id, details: { name, term, classId, subjectId } });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'An error occurred.', userMessage: 'Something went wrong. Please try again.' });
   }
 };

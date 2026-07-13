@@ -183,17 +183,36 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/', apiLimiter);
 
-// Auth Rate Limiting - Prevent Brute Force
+// Auth Rate Limiting - Prevent Brute Force on ALL auth endpoints
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
   skip: (req) => req.method === 'OPTIONS',
   message: {
     success: false,
-    message: 'Too many login attempts, please try again in an hour'
+    message: 'Too many attempts, please try again later'
   }
 });
-app.use('/api/auth/login', authLimiter);
+// Apply to all login, MFA, registration, and password reset endpoints
+const authPaths = [
+  '/api/auth/login',
+  '/api/auth/student-login',
+  '/api/auth/teacher-login',
+  '/api/auth/admin-login',
+  '/api/auth/branch-login',
+  '/api/auth/parent-login',
+  '/api/auth/register',
+  '/api/auth/verify-email',
+  '/api/auth/resend-verification',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+  '/api/auth/verify-2fa',
+  '/api/auth/resend-2fa',
+  '/api/auth/refresh',
+];
+authPaths.forEach((p) => app.use(p, authLimiter));
+// Legacy paths (without /v1)
+authPaths.forEach((p) => app.use(p.replace('/api/', '/api/'), authLimiter));
 
 // Attendance Rate Limiting - Prevent duplicate check-ins
 const attendanceLimiter = rateLimit({
@@ -221,6 +240,20 @@ app.use('/api/exams/results', examSubmitLimiter);
 
 // Prevent MongoDB Injection
 app.use(mongoSanitize());
+
+// OTP/MFA Rate Limiting - very strict (prevent brute-force OTP)
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skip: (req) => req.method === 'OPTIONS',
+  message: {
+    success: false,
+    message: 'Too many OTP attempts, please try again after 15 minutes'
+  }
+});
+app.use('/api/auth/verify-2fa', otpLimiter);
+app.use('/api/auth/resend-2fa', otpLimiter);
+app.use('/api/auth/mfa', otpLimiter);
 
 // Prevent HTTP Parameter Pollution
 app.use(hpp());

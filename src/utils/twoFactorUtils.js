@@ -1,13 +1,14 @@
 import bcrypt from 'bcryptjs';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import crypto from 'crypto';
 import { sendOTPEmail as sendOTPEmailFromService } from './emailService.js';
 
 /**
- * Generate a 6-digit numeric OTP
+ * Generate a cryptographically secure 6-digit numeric OTP
  */
 export const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 999999).toString();
 };
 
 /**
@@ -71,7 +72,7 @@ export const verifyTOTP = (token, secret) => {
     secret: secret,
     encoding: 'base32',
     token: token,
-    window: 2 // Allow 2 time steps before/after for clock skew
+    window: 1 // Allow 1 time step (±30s) for clock skew
   });
 };
 

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import ClassSubject from '../models/ClassSubject.js';
 import School from '../models/School.js';
@@ -584,6 +585,12 @@ export const adminLogin = async (req, res) => {
           isSuperAdmin: true,
           token: await issueTokens(res, user),
         });
+      } else {
+        if (user) await handleFailedLogin(user);
+        return res.status(401).json({
+          message: 'Invalid credentials',
+          userMessage: 'Invalid email or password. Please check and try again.'
+        });
       }
     }
 
@@ -603,7 +610,22 @@ export const adminLogin = async (req, res) => {
       school: selectedSchoolId
     }).populate('school').populate('branch');
 
-    if (user && (await user.matchPassword(password))) {
+    if (!user) {
+      return res.status(401).json({ 
+        message: 'Invalid Admin email or password',
+        userMessage: 'Invalid email or password. Please check and try again.'
+      });
+    }
+
+    const lockoutStatus = checkLockout(user);
+    if (lockoutStatus.locked) {
+      return res.status(403).json({
+        message: 'Account locked',
+        userMessage: `Too many failed login attempts. Your account is locked for another ${lockoutStatus.remainingMin} minutes.`
+      });
+    }
+
+    if (await user.matchPassword(password)) {
       // Validate branch if user is a branch manager
       if ((user.role === 'branchmanager' || user.role === 'branch_manager') && !user.branch) {
         return res.status(403).json({
@@ -647,6 +669,7 @@ export const adminLogin = async (req, res) => {
         token: await issueTokens(res, user),
       });
     } else {
+      await handleFailedLogin(user);
       res.status(401).json({ 
         message: 'Invalid Admin email or password',
         userMessage: 'Invalid email or password. Please check and try again.'
@@ -700,6 +723,15 @@ export const branchLogin = async (req, res) => {
       });
     }
 
+    // Check branch lockout
+    const branchLockout = checkLockout(branch);
+    if (branchLockout.locked) {
+      return res.status(403).json({
+        message: 'Branch account locked',
+        userMessage: `Too many failed login attempts. This branch account is locked for another ${branchLockout.remainingMin} minutes.`
+      });
+    }
+
     // Validate Branch Status
     if (branch.status !== 'active') {
       return res.status(403).json({
@@ -720,11 +752,25 @@ export const branchLogin = async (req, res) => {
     // Check password
     const isMatch = await branch.matchPassword(password);
     if (!isMatch) {
+      // Track failed branch login
+      const MAX_ATTEMPTS = 5;
+      const LOCK_TIME = 5 * 60 * 1000;
+      branch.loginAttempts = (branch.loginAttempts || 0) + 1;
+      if (branch.loginAttempts >= MAX_ATTEMPTS) {
+        branch.lockUntil = Date.now() + LOCK_TIME;
+        branch.loginAttempts = 0;
+      }
+      await branch.save();
       return res.status(401).json({ 
         message: 'Invalid branch credentials',
         userMessage: 'Invalid email or password for this branch.'
       });
     }
+
+    // Reset lockout on successful login
+    branch.loginAttempts = 0;
+    branch.lockUntil = undefined;
+    await branch.save();
 
     // Resolve permissions from role
     let permissions = [
@@ -2111,10 +2157,14 @@ export const verifyMFA = async (req, res) => {
       const isValidBackup = await verifyBackupCode(backupCode, user.twoFactorRecoveryCodes);
       
       if (isValidBackup) {
-        // Remove used backup code
-        user.twoFactorRecoveryCodes = user.twoFactorRecoveryCodes.filter(
-          (code, index) => !verifyBackupCode(backupCode, [code])
+        // Remove used backup code — use Promise.all for async bcrypt comparison
+        const remainingCodes = await Promise.all(
+          user.twoFactorRecoveryCodes.map(async (code) => {
+            const matches = await bcrypt.compare(backupCode, code);
+            return !matches; // Keep codes that do NOT match the used one
+          })
         );
+        user.twoFactorRecoveryCodes = user.twoFactorRecoveryCodes.filter((_, i) => remainingCodes[i]);
         await user.save();
 
         // Generate and return tokens
