@@ -43,8 +43,11 @@ import {
   activateFingerprint
 } from '../controllers/attendanceController.js';
 import { protect } from '../middlewares/authMiddleware.js';
+import { injectAcademicYear } from '../utils/academicUtils.js';
+import asyncHandler from '../utils/asyncHandler.js';
 
 const router = express.Router();
+router.use(asyncHandler(injectAcademicYear));
 
 router.post('/qr/generate', protect, generateAttendanceQR);
 router.post('/qr/verify', protect, verifyQRAttendance);
