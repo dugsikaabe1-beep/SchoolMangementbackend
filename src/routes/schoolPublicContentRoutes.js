@@ -9,12 +9,14 @@ import {
 import { uploadFile } from '../controllers/uploadController.js';
 import { uploadImageMiddleware } from '../middlewares/uploadMiddleware.js';
 import { protect, authorizeRoles } from '../middlewares/authMiddleware.js';
+import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 
 const router = express.Router();
 
 // Protected routes (School Admin only)
 router.use(protect);
 router.use(authorizeRoles('schooladmin', 'admin', 'school_admin'));
+router.use(checkModuleAccess('website'));
 
 // Image upload
 router.post('/upload', uploadImageMiddleware, uploadFile);

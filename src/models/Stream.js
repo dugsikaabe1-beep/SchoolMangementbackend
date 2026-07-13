@@ -27,6 +27,8 @@ const streamSchema = new mongoose.Schema(
 );
 
 streamSchema.index({ tenant: 1, branch: 1 });
+streamSchema.index({ tenant: 1, branch: 1, isDeleted: 1, name: 1 });
+streamSchema.index({ tenant: 1, branch: 1, isDeleted: 1, code: 1 });
 
 const Stream = mongoose.model('Stream', streamSchema);
 export default Stream;

@@ -9,6 +9,7 @@
     "dev": "nodemon src/server.js",
     "worker": "node src/workers/emailWorker.js",
     "test": "jest",
+    "test:academic-terms": "node --test test/academicTermValidation.test.mjs",
     "build": "echo 'No build step required for Node.js'",
     "seed": "node scripts/seedDatabase.js",
     "list-schools": "node scripts/listSchoolsTenants.js"

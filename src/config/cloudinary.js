@@ -17,11 +17,31 @@ export const CLOUDINARY_CONFIG = {
   // Maximum file size: 10MB
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB in bytes
   
-  // Allowed image formats
-  ALLOWED_IMAGE_FORMATS: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'],
+  // Allowed image formats. SVG is intentionally excluded because it can carry
+  // executable markup when rendered back into the browser.
+  ALLOWED_IMAGE_FORMATS: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
   
   // Allowed document formats
-  ALLOWED_DOC_FORMATS: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
+  ALLOWED_DOC_FORMATS: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv'],
+
+  IMAGE_MIME_TYPES: {
+    jpg: ['image/jpeg'],
+    jpeg: ['image/jpeg'],
+    png: ['image/png'],
+    webp: ['image/webp'],
+    gif: ['image/gif'],
+  },
+
+  DOCUMENT_MIME_TYPES: {
+    pdf: ['application/pdf'],
+    doc: ['application/msword'],
+    docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    xls: ['application/vnd.ms-excel'],
+    xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ppt: ['application/vnd.ms-powerpoint'],
+    pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    csv: ['text/csv', 'application/csv', 'application/vnd.ms-excel'],
+  },
   
   // Folder structure
   FOLDER_STRUCTURE: {
@@ -60,21 +80,12 @@ export const CLOUDINARY_CONFIG = {
  */
 export const validateFileType = (mimetype, originalname) => {
   const ext = originalname.split('.').pop().toLowerCase();
-  
-  const allowedImages = CLOUDINARY_CONFIG.ALLOWED_IMAGE_FORMATS;
-  const allowedDocs = CLOUDINARY_CONFIG.ALLOWED_DOC_FORMATS;
-  
-  // Check if it's an image
-  if (mimetype.startsWith('image/')) {
-    return allowedImages.includes(ext);
-  }
-  
-  // Check if it's a document
-  if (mimetype.startsWith('application/') || mimetype.startsWith('text/')) {
-    return allowedDocs.includes(ext);
-  }
-  
-  return false;
+  const allowedMimes = {
+    ...CLOUDINARY_CONFIG.IMAGE_MIME_TYPES,
+    ...CLOUDINARY_CONFIG.DOCUMENT_MIME_TYPES,
+  };
+
+  return Boolean(allowedMimes[ext]?.includes(mimetype));
 };
 
 /**
@@ -94,6 +105,11 @@ export const validateFileSize = (size) => {
  */
 export const generateFolderPath = (tenantId, type) => {
   const { BASE, FOLDER_STRUCTURE } = CLOUDINARY_CONFIG;
+  const safeTenantId = String(tenantId || 'default')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'default';
   
   // Map type to folder
   const typeMap = {
@@ -108,7 +124,7 @@ export const generateFolderPath = (tenantId, type) => {
   };
   
   const folder = typeMap[type] || FOLDER_STRUCTURE.SCHOOLS;
-  return `${BASE}/${tenantId}/${folder}`;
+  return `${BASE}/${safeTenantId}/${folder}`;
 };
 
 /**

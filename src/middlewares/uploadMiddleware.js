@@ -1,21 +1,43 @@
 import multer from 'multer';
-import { CLOUDINARY_CONFIG } from '../config/cloudinary.js';
+import { CLOUDINARY_CONFIG, validateFileSize } from '../config/cloudinary.js';
 
 // Store files in memory (buffer) — NO local disk storage (Security & Performance)
 const storage = multer.memoryStorage();
 
-// Reusable file filter logic
-const createFilter = (allowedMimeTypes, allowedExtensions, errorMessage) => {
-  return (req, file, cb) => {
-    const ext = file.originalname.split('.').pop().toLowerCase();
-    const isMimeAllowed = allowedMimeTypes.some(type => file.mimetype.startsWith(type) || file.mimetype === type);
-    const isExtAllowed = allowedExtensions.includes(ext);
+const getExtension = (fileName = '') => fileName.split('.').pop()?.toLowerCase() || '';
 
-    if (isMimeAllowed || isExtAllowed) {
-      cb(null, true);
-    } else {
-      cb(new Error(errorMessage || 'File type not allowed'), false);
+const hasSuspiciousName = (fileName = '') => {
+  const normalized = String(fileName).toLowerCase();
+  return (
+    normalized.includes('\0') ||
+    /[<>:"\\|?*]/.test(normalized) ||
+    /\.(php|phtml|asp|aspx|jsp|js|mjs|cjs|html|htm|sh|bat|cmd|ps1|exe|dll|svg)(?:\.|$)/i.test(normalized)
+  );
+};
+
+const isAllowedByMimeMap = (mimeMap, file) => {
+  const ext = getExtension(file.originalname);
+  return Boolean(mimeMap[ext]?.includes(file.mimetype));
+};
+
+// Reusable file filter logic. Extension and MIME type must both match.
+const createFilter = (allowedExtensions, mimeMap, errorMessage) => {
+  return (req, file, cb) => {
+    const ext = getExtension(file.originalname);
+
+    if (hasSuspiciousName(file.originalname)) {
+      return cb(new Error('Unsafe file name. Please rename the file and try again.'), false);
     }
+
+    if (!allowedExtensions.includes(ext) || !isAllowedByMimeMap(mimeMap, file)) {
+      return cb(new Error(errorMessage || 'File type not allowed'), false);
+    }
+
+    if (file.size && !validateFileSize(file.size)) {
+      return cb(new Error('File exceeds the maximum allowed size.'), false);
+    }
+
+    return cb(null, true);
   };
 };
 
@@ -23,8 +45,8 @@ const createFilter = (allowedMimeTypes, allowedExtensions, errorMessage) => {
 export const uploadExcel = multer({
   storage,
   fileFilter: createFilter(
-    ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'],
     ['xlsx', 'xls', 'csv'],
+    CLOUDINARY_CONFIG.DOCUMENT_MIME_TYPES,
     'Only Excel (.xlsx, .xls) and CSV files are allowed.'
   ),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max for Excel
@@ -34,8 +56,8 @@ export const uploadExcel = multer({
 export const uploadImageMiddleware = multer({
   storage,
   fileFilter: createFilter(
-    ['image/'],
     CLOUDINARY_CONFIG.ALLOWED_IMAGE_FORMATS,
+    CLOUDINARY_CONFIG.IMAGE_MIME_TYPES,
     `Only images (${CLOUDINARY_CONFIG.ALLOWED_IMAGE_FORMATS.join(', ')}) are allowed.`
   ),
   limits: { fileSize: CLOUDINARY_CONFIG.MAX_FILE_SIZE }, // 10 MB max
@@ -45,8 +67,8 @@ export const uploadImageMiddleware = multer({
 export const uploadDocumentMiddleware = multer({
   storage,
   fileFilter: createFilter(
-    ['application/', 'text/'],
     CLOUDINARY_CONFIG.ALLOWED_DOC_FORMATS,
+    CLOUDINARY_CONFIG.DOCUMENT_MIME_TYPES,
     `Only documents (${CLOUDINARY_CONFIG.ALLOWED_DOC_FORMATS.join(', ')}) are allowed.`
   ),
   limits: { fileSize: CLOUDINARY_CONFIG.MAX_FILE_SIZE }, // 10 MB max
@@ -56,15 +78,21 @@ export const uploadDocumentMiddleware = multer({
 export const uploadMediaMiddleware = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    const ext = file.originalname.split('.').pop().toLowerCase();
-    const isImage = CLOUDINARY_CONFIG.ALLOWED_IMAGE_FORMATS.includes(ext);
-    const isDoc = CLOUDINARY_CONFIG.ALLOWED_DOC_FORMATS.includes(ext);
+    const ext = getExtension(file.originalname);
+    const isImage = CLOUDINARY_CONFIG.ALLOWED_IMAGE_FORMATS.includes(ext) &&
+      isAllowedByMimeMap(CLOUDINARY_CONFIG.IMAGE_MIME_TYPES, file);
+    const isDoc = CLOUDINARY_CONFIG.ALLOWED_DOC_FORMATS.includes(ext) &&
+      isAllowedByMimeMap(CLOUDINARY_CONFIG.DOCUMENT_MIME_TYPES, file);
 
-    if (isImage || isDoc) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only images and documents are allowed.'), false);
+    if (hasSuspiciousName(file.originalname)) {
+      return cb(new Error('Unsafe file name. Please rename the file and try again.'), false);
     }
+
+    if (!isImage && !isDoc) {
+      return cb(new Error('Invalid file type. Only images and documents are allowed.'), false);
+    }
+
+    return cb(null, true);
   },
   limits: { fileSize: CLOUDINARY_CONFIG.MAX_FILE_SIZE }, // 10 MB max
 }).single('media');

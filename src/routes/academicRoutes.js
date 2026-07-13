@@ -35,6 +35,16 @@ import { checkModuleAccess } from '../middlewares/featureMiddleware.js';
 import { auditMiddleware } from '../utils/auditLogger.js';
 import { injectOwnership, injectBranch } from '../middlewares/tenantMiddleware.js';
 import { injectAcademicYear } from '../utils/academicUtils.js';
+import {
+  validate,
+  academicTermQuerySchema,
+  academicTermParamSchema,
+  createAcademicTermSchema,
+  updateAcademicTermSchema,
+  streamParamSchema,
+  createStreamSchema,
+  updateStreamSchema,
+} from '../middlewares/validationMiddleware.js';
 
 const router = express.Router();
 
@@ -59,25 +69,25 @@ router.post('/years/:id/archive', checkPermission('settings.manage'), asyncHandl
 // Academic Term Management
 router.use('/terms', checkModuleAccess('academic-years'));
 router.route('/terms')
-  .get(checkPermission('settings.view'), asyncHandler(getAcademicTerms))
-  .post(checkPermission('settings.manage'), asyncHandler(createAcademicTerm));
+  .get(checkPermission('settings.view'), validate(academicTermQuerySchema), asyncHandler(getAcademicTerms))
+  .post(checkPermission('settings.manage'), validate(createAcademicTermSchema), asyncHandler(createAcademicTerm));
 
 router.route('/terms/:id')
-  .put(checkPermission('settings.manage'), asyncHandler(updateAcademicTerm))
-  .delete(checkPermission('settings.manage'), asyncHandler(deleteAcademicTerm));
+  .put(checkPermission('settings.manage'), validate(updateAcademicTermSchema), asyncHandler(updateAcademicTerm))
+  .delete(checkPermission('settings.manage'), validate(academicTermParamSchema), asyncHandler(deleteAcademicTerm));
 
-router.post('/terms/:id/activate', checkPermission('settings.manage'), asyncHandler(activateAcademicTerm));
-router.post('/terms/:id/archive', checkPermission('settings.manage'), asyncHandler(archiveAcademicTerm));
+router.post('/terms/:id/activate', checkPermission('settings.manage'), validate(academicTermParamSchema), asyncHandler(activateAcademicTerm));
+router.post('/terms/:id/archive', checkPermission('settings.manage'), validate(academicTermParamSchema), asyncHandler(archiveAcademicTerm));
 
 // Stream Management
 router.use('/streams', checkModuleAccess('academic-years'));
 router.route('/streams')
   .get(checkPermission('settings.view'), asyncHandler(getStreams))
-  .post(checkPermission('settings.manage'), asyncHandler(createStream));
+  .post(checkPermission('settings.manage'), validate(createStreamSchema), asyncHandler(createStream));
 
 router.route('/streams/:id')
-  .put(checkPermission('settings.manage'), asyncHandler(updateStream))
-  .delete(checkPermission('settings.manage'), asyncHandler(deleteStream));
+  .put(checkPermission('settings.manage'), validate(updateStreamSchema), asyncHandler(updateStream))
+  .delete(checkPermission('settings.manage'), validate(streamParamSchema), asyncHandler(deleteStream));
 
 // Student Promotion Management
 router.use('/promote', checkModuleAccess('promotions'));

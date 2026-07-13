@@ -52,6 +52,7 @@ export const FEATURE_REGISTRY = [
   { code: 'revenue-reports',label: 'Revenue Reports',       category: 'Finance' },
   { code: 'enterprise-finance', label: 'Enterprise Finance', category: 'Finance' },
   { code: 'payroll',        label: 'Payroll Management',    category: 'Finance' },
+  { code: 'salary-structure', label: 'Salary Structures',   category: 'Finance' },
   { code: 'procurement',    label: 'Procurement',           category: 'Finance' },
   { code: 'revenue-forecast', label: 'Revenue Forecasting', category: 'Finance' },
 

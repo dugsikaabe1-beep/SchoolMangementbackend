@@ -291,12 +291,14 @@ export const deleteRevenueForecast = asyncHandler(async (req, res) => {
   ok(res, { message: 'Revenue forecast archived', data: record });
 });
 
-// ============ Payroll Management
+// ============ Payroll Management — delegated to dedicated payrollController.js
+// These stubs stay for backward compat with the enterprise route; the real
+// implementation lives in src/controllers/payrollController.js
 export const getPayrolls = asyncHandler(async (req, res) => {
   const records = await Payroll.find({ ...tenantFilter(req, active) })
-    .populate('employee', 'name')
+    .populate('user', 'name customId role')
     .populate('createdBy', 'name')
-    .sort({ createdAt: -1 });
+    .sort({ year: -1, month: -1 });
   ok(res, { data: records });
 });
 
@@ -312,14 +314,22 @@ export const createPayroll = asyncHandler(async (req, res) => {
 });
 
 export const updatePayroll = asyncHandler(async (req, res) => {
-  const record = await Payroll.findOneAndUpdate({ ...tenantFilter(req, active), _id: req.params.id }, { ...req.body, updatedBy: req.user._id }, { new: true });
+  const record = await Payroll.findOneAndUpdate(
+    { ...tenantFilter(req, active), _id: req.params.id },
+    { ...req.body, updatedBy: req.user._id },
+    { new: true }
+  );
   if (!record) return res.status(404).json({ success: false, message: 'Payroll record not found' });
   logAction(req, { action: 'UPDATE_PAYROLL', module: 'FINANCE', targetId: record._id });
   ok(res, { data: record });
 });
 
 export const deletePayroll = asyncHandler(async (req, res) => {
-  const record = await Payroll.findOneAndUpdate({ ...tenantFilter(req, active), _id: req.params.id }, { isDeleted: true, deletedAt: new Date(), deletedBy: req.user._id }, { new: true });
+  const record = await Payroll.findOneAndUpdate(
+    { ...tenantFilter(req, active), _id: req.params.id },
+    { isDeleted: true, deletedAt: new Date(), deletedBy: req.user._id },
+    { new: true }
+  );
   if (!record) return res.status(404).json({ success: false, message: 'Payroll record not found' });
   logAction(req, { action: 'DELETE_PAYROLL', module: 'FINANCE', targetId: record._id });
   ok(res, { message: 'Payroll record archived', data: record });

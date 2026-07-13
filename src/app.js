@@ -9,8 +9,6 @@ import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
 import cookieParser from 'cookie-parser';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { getValidationErrors, mapErrorMessage } from './utils/errorMapper.js';
 import { ensureUserMessage } from './utils/errorMessageMapper.js';
 import { parseAllowedOrigins, originMatcher } from './config/corsConfig.js';
@@ -139,9 +137,8 @@ import idCardRoutes from './routes/idCardRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import examRoutes from './routes/examRoutes.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import payrollRoutes from './routes/payrollRoutes.js';
+import leaveRoutes from './routes/leaveRoutes.js';
 
 import { detectTenant, injectBranch, injectOwnership } from './middlewares/tenantMiddleware.js';
 import { asyncHandler } from './middlewares/asyncHandler.js';
@@ -222,8 +219,15 @@ app.use(asyncHandler(requireProfileCompletion));
 
 // --- 3. ROUTES ---
 
-// Static files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Local upload storage is intentionally disabled. All media must be uploaded to
+// Cloudinary and persisted in MongoDB as URLs/metadata only.
+app.use('/uploads', (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'Local uploads are disabled',
+    userMessage: 'This file is no longer served locally. Please use a Cloudinary asset URL.',
+  });
+});
 
 // Health check endpoints
 import { checkEmailHealth, validateEmailDeliveryConfig } from './utils/emailService.js';
@@ -300,10 +304,14 @@ app.use('/api/v1/id-cards', idCardRoutes);
 app.use('/api/v1/backups', backupRoutes);
 app.use('/api/v1/attendance', attendanceRoutes);
 app.use('/api/v1/exams', examRoutes);
+app.use('/api/v1/payroll', payrollRoutes);
+app.use('/api/v1/leaves', leaveRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/school-features', schoolFeatureRoutes);
 app.use('/api/backups', backupRoutes);
+app.use('/api/payroll', payrollRoutes);
+app.use('/api/leaves', leaveRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);

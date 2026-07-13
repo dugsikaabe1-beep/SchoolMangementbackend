@@ -21,7 +21,7 @@ const REQUIRED_PROFILE_FIELDS = {
 
 /**
  * URL path prefixes that are ALWAYS allowed, even when profile is incomplete.
- * These include: profile status check, profile completion, auth, health, uploads.
+ * These include: profile status check, profile completion, auth, and health.
  */
 const EXEMPT_PATH_PREFIXES = [
   '/api/v1/school-admin/profile-status',
@@ -50,7 +50,6 @@ const EXEMPT_PATH_PREFIXES = [
   '/health',
   '/api/v1/public/',
   '/api/public/',
-  '/uploads/',
 ];
 
 const isExemptPath = (path) => {

@@ -86,3 +86,76 @@ export const studentSchema = z.object({
     classId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid Class ID'),
   }),
 });
+
+const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid ID format');
+const dateValue = z.string().trim().refine((value) => !Number.isNaN(Date.parse(value)), {
+  message: 'Invalid date',
+});
+
+const academicTermFields = {
+  name: z.string().trim().min(2, 'Term name must be at least 2 characters').max(80, 'Term name is too long'),
+  code: z.string().trim().max(20, 'Term code is too long').optional().or(z.literal('')),
+  academicYear: objectId,
+  startDate: dateValue,
+  endDate: dateValue,
+  order: z.coerce.number().int('Order must be a whole number').min(1, 'Order must be at least 1').max(12, 'Order cannot exceed 12'),
+  status: z.enum(['active', 'upcoming', 'completed', 'archived']).optional(),
+  isCurrent: z.boolean().optional(),
+  description: z.string().trim().max(500, 'Description is too long').optional().or(z.literal('')),
+};
+
+export const academicTermQuerySchema = z.object({
+  query: z.object({
+    academicYearId: objectId.optional(),
+  }),
+});
+
+export const academicTermParamSchema = z.object({
+  params: z.object({
+    id: objectId,
+  }),
+});
+
+export const createAcademicTermSchema = z.object({
+  body: z.object(academicTermFields).refine((body) => new Date(body.endDate) >= new Date(body.startDate), {
+    message: 'End date must be on or after start date',
+    path: ['endDate'],
+  }),
+});
+
+export const updateAcademicTermSchema = z.object({
+  params: z.object({
+    id: objectId,
+  }),
+  body: z.object(academicTermFields).partial().refine((body) => {
+    if (!body.startDate || !body.endDate) return true;
+    return new Date(body.endDate) >= new Date(body.startDate);
+  }, {
+    message: 'End date must be on or after start date',
+    path: ['endDate'],
+  }),
+});
+
+const streamFields = {
+  name: z.string().trim().min(2, 'Stream name must be at least 2 characters').max(80, 'Stream name is too long'),
+  code: z.string().trim().max(20, 'Stream code is too long').optional().or(z.literal('')),
+  branch: objectId.optional().or(z.literal('')),
+  description: z.string().trim().max(500, 'Description is too long').optional().or(z.literal('')),
+};
+
+export const streamParamSchema = z.object({
+  params: z.object({
+    id: objectId,
+  }),
+});
+
+export const createStreamSchema = z.object({
+  body: z.object(streamFields),
+});
+
+export const updateStreamSchema = z.object({
+  params: z.object({
+    id: objectId,
+  }),
+  body: z.object(streamFields).partial(),
+});

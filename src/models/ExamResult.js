@@ -2,23 +2,18 @@ import mongoose from 'mongoose';
 
 const examResultSchema = new mongoose.Schema(
   {
-    // Exam Association
     exam: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Exam',
       required: true,
       index: true
     },
-    
-    // Student Association
     student: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
       index: true
     },
-    
-    // Class and Subject
     class: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Class',
@@ -29,167 +24,113 @@ const examResultSchema = new mongoose.Schema(
       ref: 'Subject',
       required: true
     },
-    
-    // Exam Status
     status: {
       type: String,
-      enum: ['NOT_STARTED', 'IN_PROGRESS', 'SUBMITTED', 'GRADED', 'CANCELLED'],
+      enum: ['NOT_STARTED', 'IN_PROGRESS', 'SUBMITTED', 'GRADED', 'REVIEW_REQUESTED', 'REVIEWED', 'CANCELLED'],
       default: 'NOT_STARTED'
     },
-    
-    // Timing
     startTime: Date,
     endTime: Date,
-    timeTaken: Number, // in seconds
+    timeTaken: Number,
     submittedAt: Date,
     gradedAt: Date,
-    
-    // Scores
-    totalQuestions: {
-      type: Number,
-      default: 0
-    },
-    attemptedQuestions: {
-      type: Number,
-      default: 0
-    },
-    correctAnswers: {
-      type: Number,
-      default: 0
-    },
-    wrongAnswers: {
-      type: Number,
-      default: 0
-    },
-    skippedQuestions: {
-      type: Number,
-      default: 0
-    },
-    score: {
-      type: Number,
-      default: 0
-    },
-    maxScore: {
-      type: Number,
-      default: 0
-    },
-    percentage: {
-      type: Number,
-      default: 0
-    },
+    totalQuestions: { type: Number, default: 0 },
+    attemptedQuestions: { type: Number, default: 0 },
+    correctAnswers: { type: Number, default: 0 },
+    wrongAnswers: { type: Number, default: 0 },
+    skippedQuestions: { type: Number, default: 0 },
+    score: { type: Number, default: 0 },
+    maxScore: { type: Number, default: 0 },
+    percentage: { type: Number, default: 0 },
     grade: String,
-    
-    // Attempt Number (for retakes)
-    attemptNumber: {
-      type: Number,
-      default: 1
-    },
-    
-    // Question Responses
+    gpa: Number,
+    cgpa: Number,
+    negativeMarkingApplied: { type: Boolean, default: false },
+    negativeMarksDeducted: { type: Number, default: 0 },
+    classRank: Number,
+    subjectRank: Number,
+    totalStudentsInClass: Number,
+    percentile: Number,
+    attemptNumber: { type: Number, default: 1 },
     responses: [{
-      question: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Question'
-      },
-      answer: mongoose.Schema.Types.Mixed, // Can be string, array, object depending on question type
+      question: { type: mongoose.Schema.Types.ObjectId, ref: 'Question' },
+      answer: mongoose.Schema.Types.Mixed,
       isCorrect: Boolean,
       isSkipped: Boolean,
-      timeSpent: Number, // in seconds
-      points: Number
+      timeSpent: Number,
+      points: Number,
+      negativePoints: { type: Number, default: 0 },
+      autoGraded: { type: Boolean, default: true },
+      gradedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      feedback: String
     }],
-    
-    // Proctoring Data (if enabled)
     proctoringData: {
       flaggedEvents: [{
-        type: String, // 'TAB_SWITCH', 'COPY_PASTE', 'MULTIPLE_WINDOWS', etc.
+        type: String,
         timestamp: Date,
         details: String
       }],
-      screenshots: [String], // Cloudinary URLs
-      webcamSnapshots: [String], // Cloudinary URLs
+      screenshots: [String],
+      webcamSnapshots: [String],
       ip: String,
-      browserInfo: String
+      browserInfo: String,
+      totalTabSwitches: { type: Number, default: 0 },
+      fullScreenExits: { type: Number, default: 0 }
     },
-    
-    // Grading
-    gradedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+    published: { type: Boolean, default: false },
+    publishedAt: Date,
+    publishedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewRequested: { type: Boolean, default: false },
+    reviewRequestedAt: Date,
+    reviewReason: String,
+    reviewStatus: {
+      type: String,
+      enum: ['NONE', 'PENDING', 'ACCEPTED', 'REJECTED'],
+      default: 'NONE'
     },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: Date,
+    reviewNotes: String,
+    gradedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     gradingNotes: String,
-    
-    // Feedback
     feedback: String,
-    
-    // Multi-tenancy
-    school: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'School',
-      required: true,
-      index: true
-    },
-    branch: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Branch',
-      required: true,
-      index: true
-    },
-    academicYear: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AcademicYear',
-      required: true,
-      index: true
-    },
-    
-    // Audit Fields
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    updatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    isDeleted: {
-      type: Boolean,
-      default: false
-    },
-    deletedAt: {
-      type: Date
-    },
-    deletedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }
+    importBatchId: String,
+    school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: Date,
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }
 );
 
-// Indexes for efficient queries
 examResultSchema.index({ school: 1, branch: 1, exam: 1 });
 examResultSchema.index({ school: 1, branch: 1, student: 1 });
 examResultSchema.index({ school: 1, branch: 1, status: 1 });
 examResultSchema.index({ school: 1, branch: 1, deletedAt: 1 });
+examResultSchema.index({ school: 1, branch: 1, published: 1 });
+examResultSchema.index({ school: 1, branch: 1, class: 1, subject: 1 });
 examResultSchema.index({ exam: 1, student: 1, attemptNumber: 1 }, { unique: true });
 
-// Virtual for pass/fail status
 examResultSchema.virtual('passed').get(function() {
   if (!this.exam || !this.exam.passingScore) return null;
   return this.percentage >= this.exam.passingScore;
 });
 
-// Method to calculate score
 examResultSchema.methods.calculateScore = async function() {
   const Exam = (await import('./Exam.js')).default;
   const exam = await Exam.findById(this.exam);
-  
   if (!exam) return;
-  
+
   let correct = 0;
   let wrong = 0;
   let skipped = 0;
   let totalScore = 0;
-  
+  let totalNegative = 0;
+
   for (const response of this.responses) {
     if (response.isSkipped) {
       skipped++;
@@ -198,36 +139,39 @@ examResultSchema.methods.calculateScore = async function() {
       totalScore += response.points || 0;
     } else {
       wrong++;
+      if (exam.negativeMarking?.enabled && response.points > 0) {
+        const penalty = Math.min(
+          response.points * (exam.negativeMarking.penaltyPerWrong / 100),
+          response.points * (exam.negativeMarking.maxNegativePercentage / 100)
+        );
+        totalNegative += penalty;
+        response.negativePoints = penalty;
+      }
     }
   }
-  
+
   this.correctAnswers = correct;
   this.wrongAnswers = wrong;
   this.skippedQuestions = skipped;
   this.attemptedQuestions = this.responses.length - skipped;
-  this.score = totalScore;
+  this.score = Math.max(0, totalScore - totalNegative);
   this.maxScore = exam.maxMarks;
   this.percentage = this.maxScore > 0 ? (this.score / this.maxScore) * 100 : 0;
-  
-  // Auto-grade based on percentage
-  if (this.percentage >= 90) this.grade = 'A';
-  else if (this.percentage >= 80) this.grade = 'B';
-  else if (this.percentage >= 70) this.grade = 'C';
-  else if (this.percentage >= 60) this.grade = 'D';
-  else if (this.percentage >= 50) this.grade = 'E';
-  else this.grade = 'F';
-  
+  this.negativeMarkingApplied = exam.negativeMarking?.enabled || false;
+  this.negativeMarksDeducted = totalNegative;
+
+  this.grade = exam.getGradeForPercentage(this.percentage);
+  this.gpa = exam.getGPAPoints(this.percentage);
+
   await this.save();
 };
 
-// Method to start exam
 examResultSchema.methods.startExam = async function() {
   this.status = 'IN_PROGRESS';
   this.startTime = new Date();
   await this.save();
 };
 
-// Method to submit exam
 examResultSchema.methods.submitExam = async function() {
   this.status = 'SUBMITTED';
   this.endTime = new Date();

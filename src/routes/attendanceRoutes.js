@@ -2,62 +2,95 @@ import express from 'express';
 import {
   generateAttendanceQR,
   verifyQRAttendance,
+  checkOutQR,
+  revokeQR,
+  getQRAttendanceHistory,
+  getQRDailyReport,
+  getQRMonthlyReport,
+  generatePersonalQR,
+  verifyPersonalQR,
+  bulkQRAttendance,
   getAttendanceMethodStats,
   getAttendanceByMethod,
-  bulkQRAttendance,
+  exportAttendance,
   registerRFIDTag,
   verifyRFIDAttendance,
   getRFIDRegistrationStatus,
   unregisterRFIDTag,
+  replaceRFIDCard,
+  deactivateRFIDCard,
+  activateRFIDCard,
   registerNFCId,
   verifyNFCAttendance,
   getNFCRegistrationStatus,
   unregisterNFCId,
+  replaceNFCCard,
+  deactivateNFCCard,
+  activateNFCCard,
   registerFaceData,
   verifyFaceAttendance,
   getFaceRegistrationStatus,
   unregisterFaceData,
+  replaceFaceData,
+  deactivateFaceData,
+  activateFaceData,
   registerFingerprintTemplate,
   verifyFingerprintAttendance,
   getFingerprintRegistrationStatus,
-  unregisterFingerprintTemplate
+  unregisterFingerprintTemplate,
+  replaceFingerprint,
+  deactivateFingerprint,
+  activateFingerprint
 } from '../controllers/attendanceController.js';
 import { protect } from '../middlewares/authMiddleware.js';
-import { asyncHandler } from '../middlewares/asyncHandler.js';
 
 const router = express.Router();
 
-// QR Attendance Routes
-router.post('/qr/generate', protect, asyncHandler(generateAttendanceQR));
-router.post('/qr/verify', protect, asyncHandler(verifyQRAttendance));
-router.post('/qr/bulk', protect, asyncHandler(bulkQRAttendance));
+router.post('/qr/generate', protect, generateAttendanceQR);
+router.post('/qr/verify', protect, verifyQRAttendance);
+router.post('/qr/check-out/:attendanceId', protect, checkOutQR);
+router.post('/qr/revoke', protect, revokeQR);
+router.get('/qr/history', protect, getQRAttendanceHistory);
+router.get('/qr/daily-report', protect, getQRDailyReport);
+router.get('/qr/monthly-report', protect, getQRMonthlyReport);
+router.post('/qr/personal', protect, generatePersonalQR);
+router.post('/qr/personal/verify', protect, verifyPersonalQR);
+router.post('/qr/bulk', protect, bulkQRAttendance);
 
-// RFID Attendance Routes
-router.post('/rfid/register', protect, asyncHandler(registerRFIDTag));
-router.post('/rfid/verify', protect, asyncHandler(verifyRFIDAttendance));
-router.get('/rfid/status/:studentId', protect, asyncHandler(getRFIDRegistrationStatus));
-router.delete('/rfid/unregister/:studentId', protect, asyncHandler(unregisterRFIDTag));
+router.post('/rfid/register', protect, registerRFIDTag);
+router.post('/rfid/verify', protect, verifyRFIDAttendance);
+router.get('/rfid/status/:userId', protect, getRFIDRegistrationStatus);
+router.delete('/rfid/unregister/:userId', protect, unregisterRFIDTag);
+router.post('/rfid/replace', protect, replaceRFIDCard);
+router.patch('/rfid/deactivate/:userId', protect, deactivateRFIDCard);
+router.patch('/rfid/activate/:userId', protect, activateRFIDCard);
 
-// NFC Attendance Routes
-router.post('/nfc/register', protect, asyncHandler(registerNFCId));
-router.post('/nfc/verify', protect, asyncHandler(verifyNFCAttendance));
-router.get('/nfc/status/:studentId', protect, asyncHandler(getNFCRegistrationStatus));
-router.delete('/nfc/unregister/:studentId', protect, asyncHandler(unregisterNFCId));
+router.post('/nfc/register', protect, registerNFCId);
+router.post('/nfc/verify', protect, verifyNFCAttendance);
+router.get('/nfc/status/:userId', protect, getNFCRegistrationStatus);
+router.delete('/nfc/unregister/:userId', protect, unregisterNFCId);
+router.put('/nfc/replace', protect, replaceNFCCard);
+router.put('/nfc/deactivate/:userId', protect, deactivateNFCCard);
+router.put('/nfc/activate/:userId', protect, activateNFCCard);
 
-// Face Recognition Attendance Routes
-router.post('/face/register', protect, asyncHandler(registerFaceData));
-router.post('/face/verify', protect, asyncHandler(verifyFaceAttendance));
-router.get('/face/status/:studentId', protect, asyncHandler(getFaceRegistrationStatus));
-router.delete('/face/unregister/:studentId', protect, asyncHandler(unregisterFaceData));
+router.post('/face/register', protect, registerFaceData);
+router.post('/face/verify', protect, verifyFaceAttendance);
+router.get('/face/status/:userId', protect, getFaceRegistrationStatus);
+router.delete('/face/unregister/:userId', protect, unregisterFaceData);
+router.put('/face/replace', protect, replaceFaceData);
+router.put('/face/deactivate/:userId', protect, deactivateFaceData);
+router.put('/face/activate/:userId', protect, activateFaceData);
 
-// Fingerprint Attendance Routes
-router.post('/fingerprint/register', protect, asyncHandler(registerFingerprintTemplate));
-router.post('/fingerprint/verify', protect, asyncHandler(verifyFingerprintAttendance));
-router.get('/fingerprint/status/:studentId', protect, asyncHandler(getFingerprintRegistrationStatus));
-router.delete('/fingerprint/unregister/:studentId', protect, asyncHandler(unregisterFingerprintTemplate));
+router.post('/fingerprint/register', protect, registerFingerprintTemplate);
+router.post('/fingerprint/verify', protect, verifyFingerprintAttendance);
+router.get('/fingerprint/status/:userId', protect, getFingerprintRegistrationStatus);
+router.delete('/fingerprint/unregister/:userId/:fingerIndex?', protect, unregisterFingerprintTemplate);
+router.put('/fingerprint/replace', protect, replaceFingerprint);
+router.put('/fingerprint/deactivate/:userId', protect, deactivateFingerprint);
+router.put('/fingerprint/activate/:userId', protect, activateFingerprint);
 
-// Attendance Analytics
-router.get('/stats/methods', protect, asyncHandler(getAttendanceMethodStats));
-router.get('/by-method', protect, asyncHandler(getAttendanceByMethod));
+router.get('/stats/methods', protect, getAttendanceMethodStats);
+router.get('/by-method', protect, getAttendanceByMethod);
+router.get('/export', protect, exportAttendance);
 
 export default router;

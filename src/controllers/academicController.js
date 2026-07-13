@@ -3,6 +3,7 @@ import AcademicYear from '../models/AcademicYear.js';
 import AcademicTerm from '../models/AcademicTerm.js';
 import Stream from '../models/Stream.js';
 import Class from '../models/Class.js';
+import Branch from '../models/Branch.js';
 import PromotionHistory from '../models/PromotionHistory.js';
 import { logAction } from '../utils/auditLogger.js';
 
@@ -26,6 +27,110 @@ const getNextGrade = (gradeName) => {
     }
   }
   return null; // Don't create Grade 13 or higher
+};
+
+const normalizeOptionalString = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const ensureAcademicYearForTerm = async (req, academicYearId) => {
+  const academicYear = await AcademicYear.findOne({
+    _id: academicYearId,
+    tenant: req.schoolId,
+    isDeleted: { $ne: true },
+  });
+
+  if (!academicYear) {
+    return { error: { status: 400, message: 'Academic year is invalid or unavailable' } };
+  }
+
+  if (
+    req.branchId &&
+    academicYear.branch &&
+    academicYear.branch.toString() !== req.branchId.toString()
+  ) {
+    return { error: { status: 403, message: 'Academic year does not belong to this branch' } };
+  }
+
+  return { academicYear };
+};
+
+const ensureTermDatesFitYear = (academicYear, startDate, endDate) => {
+  const termStart = new Date(startDate);
+  const termEnd = new Date(endDate);
+  const yearStart = new Date(academicYear.startDate);
+  const yearEnd = new Date(academicYear.endDate);
+
+  if (termEnd < termStart) {
+    return 'End date must be on or after start date';
+  }
+
+  if (termStart < yearStart || termEnd > yearEnd) {
+    return 'Academic term dates must fall within the selected academic year';
+  }
+
+  return null;
+};
+
+const buildAcademicTermDuplicateQuery = ({ req, academicYear, name, code, excludeId }) => {
+  const or = [];
+  if (name) or.push({ name });
+  if (code) or.push({ code });
+
+  if (!or.length) return null;
+
+  const query = {
+    tenant: req.schoolId,
+    academicYear,
+    branch: req.branchId || null,
+    isDeleted: { $ne: true },
+    $or: or,
+  };
+
+  if (excludeId) query._id = { $ne: excludeId };
+  return query;
+};
+
+const resolveStreamBranch = async (req, submittedBranch) => {
+  const branchId = submittedBranch || req.branchId || null;
+
+  if (!branchId) return { branch: null };
+
+  if (req.branchId && branchId.toString() !== req.branchId.toString()) {
+    return { error: { status: 403, message: 'You can only manage streams for your assigned branch' } };
+  }
+
+  const branch = await Branch.findOne({
+    _id: branchId,
+    tenant: req.schoolId,
+    isDeleted: { $ne: true },
+    status: { $ne: 'archived' },
+  }).select('_id');
+
+  if (!branch) {
+    return { error: { status: 400, message: 'Branch is invalid or unavailable' } };
+  }
+
+  return { branch: branch._id };
+};
+
+const buildStreamDuplicateQuery = ({ req, branch, name, code, excludeId }) => {
+  const or = [];
+  if (name) or.push({ name });
+  if (code) or.push({ code });
+  if (!or.length) return null;
+
+  const query = {
+    tenant: req.schoolId,
+    branch: branch || null,
+    isDeleted: { $ne: true },
+    $or: or,
+  };
+
+  if (excludeId) query._id = { $ne: excludeId };
+  return query;
 };
 
 /**
@@ -696,7 +801,7 @@ export const transferStudent = async (req, res) => {
 export const getAcademicTerms = async (req, res) => {
   try {
     const { academicYearId } = req.query;
-    const query = { tenant: req.schoolId };
+    const query = { tenant: req.schoolId, isDeleted: { $ne: true } };
     
     if (req.branchId) {
       query.$or = [{ branch: req.branchId }, { branch: null }];
@@ -730,13 +835,27 @@ export const getAcademicTerms = async (req, res) => {
 export const createAcademicTerm = async (req, res) => {
   try {
     const { name, code, academicYear, startDate, endDate, order, status, isCurrent } = req.body;
+    const normalizedName = normalizeOptionalString(name);
+    const normalizedCode = normalizeOptionalString(code);
+
+    const { academicYear: academicYearDoc, error } = await ensureAcademicYearForTerm(req, academicYear);
+    if (error) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+
+    const dateError = ensureTermDatesFitYear(academicYearDoc, startDate, endDate);
+    if (dateError) {
+      return res.status(400).json({ success: false, message: dateError, userMessage: dateError });
+    }
 
     // Check if name/code already exists for this academic year
-    const existing = await AcademicTerm.findOne({ 
-      tenant: req.schoolId, 
-      academicYear, 
-      $or: [{ name }, { code }] 
+    const duplicateQuery = buildAcademicTermDuplicateQuery({
+      req,
+      academicYear,
+      name: normalizedName,
+      code: normalizedCode,
     });
+    const existing = duplicateQuery ? await AcademicTerm.findOne(duplicateQuery) : null;
     if (existing) {
       return res.status(400).json({ 
         success: false, 
@@ -753,14 +872,14 @@ export const createAcademicTerm = async (req, res) => {
     }
 
     const academicTerm = await AcademicTerm.create({
-      name,
-      code,
+      name: normalizedName,
+      code: normalizedCode,
       academicYear,
       startDate,
       endDate,
       order: order || 1,
-      status: status || 'upcoming',
-      isCurrent: isCurrent || status === 'active',
+      status: isCurrent || status === 'active' ? 'active' : (status || 'upcoming'),
+      isCurrent: Boolean(isCurrent || status === 'active'),
       tenant: req.schoolId,
       branch: req.branchId || null,
       createdBy: req.user._id
@@ -770,7 +889,7 @@ export const createAcademicTerm = async (req, res) => {
       action: 'ACADEMIC_TERM_CREATE',
       module: 'ACADEMIC',
       targetId: academicTerm._id,
-      details: { name, academicYear },
+      details: { name: normalizedName, academicYear },
     });
 
     res.status(201).json({
@@ -793,32 +912,76 @@ export const createAcademicTerm = async (req, res) => {
 export const updateAcademicTerm = async (req, res) => {
   try {
     const { status, isCurrent } = req.body;
+    const existingTerm = await AcademicTerm.findOne({
+      _id: req.params.id,
+      tenant: req.schoolId,
+      isDeleted: { $ne: true },
+    });
+
+    if (!existingTerm) {
+      return res.status(404).json({ success: false, message: 'Academic term not found' });
+    }
+
+    const academicYearId = req.body.academicYear || existingTerm.academicYear;
+    const { academicYear: academicYearDoc, error } = await ensureAcademicYearForTerm(req, academicYearId);
+    if (error) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+
+    const nextStartDate = req.body.startDate || existingTerm.startDate;
+    const nextEndDate = req.body.endDate || existingTerm.endDate;
+    const dateError = ensureTermDatesFitYear(academicYearDoc, nextStartDate, nextEndDate);
+    if (dateError) {
+      return res.status(400).json({ success: false, message: dateError, userMessage: dateError });
+    }
+
+    const normalizedName = normalizeOptionalString(req.body.name);
+    const normalizedCode = normalizeOptionalString(req.body.code);
+    const duplicateQuery = buildAcademicTermDuplicateQuery({
+      req,
+      academicYear: academicYearId,
+      name: normalizedName || existingTerm.name,
+      code: normalizedCode || existingTerm.code,
+      excludeId: req.params.id,
+    });
+    const duplicate = duplicateQuery ? await AcademicTerm.findOne(duplicateQuery) : null;
+    if (duplicate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Academic term name or code already exists for this year',
+      });
+    }
 
     // If this is being set to active/current, deactivate others in the same academic year
     if (status === 'active' || isCurrent === true) {
-      const existing = await AcademicTerm.findOne({ _id: req.params.id, tenant: req.schoolId });
-      if (existing) {
-        await AcademicTerm.updateMany(
-          {
-            tenant: req.schoolId,
-            academicYear: existing.academicYear,
-            branch: existing.branch || req.branchId || null,
-            _id: { $ne: req.params.id },
-          },
-          { status: 'upcoming', isCurrent: false }
-        );
-        req.body.status = 'active';
-        req.body.isCurrent = true;
-      }
+      await AcademicTerm.updateMany(
+        {
+          tenant: req.schoolId,
+          academicYear: academicYearId,
+          branch: existingTerm.branch || req.branchId || null,
+          _id: { $ne: req.params.id },
+          isDeleted: { $ne: true },
+        },
+        { status: 'upcoming', isCurrent: false }
+      );
+      req.body.status = 'active';
+      req.body.isCurrent = true;
     }
 
     if (status === 'archived' || status === 'completed') {
       req.body.isCurrent = false;
     }
 
+    const updatePayload = {
+      ...req.body,
+      ...(normalizedName !== undefined ? { name: normalizedName } : {}),
+      ...(typeof req.body.code === 'string' ? { code: normalizedCode } : {}),
+      updatedBy: req.user._id,
+    };
+
     const academicTerm = await AcademicTerm.findOneAndUpdate(
-      { _id: req.params.id, tenant: req.schoolId },
-      { ...req.body, updatedBy: req.user._id },
+      { _id: req.params.id, tenant: req.schoolId, isDeleted: { $ne: true } },
+      updatePayload,
       { new: true }
     );
 
@@ -853,7 +1016,7 @@ export const updateAcademicTerm = async (req, res) => {
 export const deleteAcademicTerm = async (req, res) => {
   try {
     const academicTerm = await AcademicTerm.findOneAndUpdate(
-      { _id: req.params.id, tenant: req.schoolId },
+      { _id: req.params.id, tenant: req.schoolId, isDeleted: { $ne: true } },
       { isDeleted: true, deletedBy: req.user._id, deletedAt: new Date() },
       { new: true }
     );
@@ -886,13 +1049,23 @@ export const deleteAcademicTerm = async (req, res) => {
  */
 export const activateAcademicTerm = async (req, res) => {
   try {
-    const term = await AcademicTerm.findOne({ _id: req.params.id, tenant: req.schoolId });
+    const term = await AcademicTerm.findOne({
+      _id: req.params.id,
+      tenant: req.schoolId,
+      isDeleted: { $ne: true },
+    });
     if (!term) {
       return res.status(404).json({ success: false, message: 'Academic term not found' });
     }
 
     await AcademicTerm.updateMany(
-      { tenant: req.schoolId, academicYear: term.academicYear, branch: term.branch, _id: { $ne: term._id } },
+      {
+        tenant: req.schoolId,
+        academicYear: term.academicYear,
+        branch: term.branch,
+        _id: { $ne: term._id },
+        isDeleted: { $ne: true },
+      },
       { status: 'upcoming', isCurrent: false }
     );
 
@@ -919,7 +1092,7 @@ export const activateAcademicTerm = async (req, res) => {
 export const archiveAcademicTerm = async (req, res) => {
   try {
     const term = await AcademicTerm.findOneAndUpdate(
-      { _id: req.params.id, tenant: req.schoolId },
+      { _id: req.params.id, tenant: req.schoolId, isDeleted: { $ne: true } },
       { status: 'archived', isCurrent: false, updatedBy: req.user._id },
       { new: true }
     );
@@ -950,7 +1123,7 @@ export const archiveAcademicTerm = async (req, res) => {
  */
 export const getStreams = async (req, res) => {
   try {
-    const query = { tenant: req.schoolId, isDeleted: false };
+    const query = { tenant: req.schoolId, isDeleted: { $ne: true } };
     
     if (req.branchId) {
       query.$or = [{ branch: req.branchId }, { branch: null }];
@@ -980,24 +1153,34 @@ export const getStreams = async (req, res) => {
 export const createStream = async (req, res) => {
   try {
     const { name, code, branch, description } = req.body;
+    const normalizedName = normalizeOptionalString(name);
+    const normalizedCode = normalizeOptionalString(code);
+    const normalizedDescription = normalizeOptionalString(description);
 
-    const existing = await Stream.findOne({ 
-      tenant: req.schoolId, 
-      $or: [{ name }, { code }],
-      isDeleted: false
+    const { branch: resolvedBranch, error } = await resolveStreamBranch(req, branch);
+    if (error) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+
+    const duplicateQuery = buildStreamDuplicateQuery({
+      req,
+      branch: resolvedBranch,
+      name: normalizedName,
+      code: normalizedCode,
     });
+    const existing = duplicateQuery ? await Stream.findOne(duplicateQuery) : null;
     if (existing) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Stream name or code already exists' 
+        message: 'Stream name or code already exists for this branch' 
       });
     }
 
     const stream = await Stream.create({
-      name,
-      code,
-      branch,
-      description,
+      name: normalizedName,
+      code: normalizedCode,
+      branch: resolvedBranch,
+      description: normalizedDescription,
       tenant: req.schoolId,
       createdBy: req.user._id
     });
@@ -1006,7 +1189,7 @@ export const createStream = async (req, res) => {
       action: 'STREAM_CREATE',
       module: 'ACADEMIC',
       targetId: stream._id,
-      details: { name, code, branch },
+      details: { name: normalizedName, code: normalizedCode, branch: resolvedBranch },
     });
 
     res.status(201).json({
@@ -1029,10 +1212,53 @@ export const createStream = async (req, res) => {
 export const updateStream = async (req, res) => {
   try {
     const { id } = req.params;
+    const existingStream = await Stream.findOne({
+      _id: id,
+      tenant: req.schoolId,
+      isDeleted: { $ne: true },
+    });
+
+    if (!existingStream) {
+      return res.status(404).json({ success: false, message: 'Stream not found' });
+    }
+
+    const nextBranchInput = Object.prototype.hasOwnProperty.call(req.body, 'branch')
+      ? req.body.branch
+      : existingStream.branch;
+    const { branch: resolvedBranch, error } = await resolveStreamBranch(req, nextBranchInput);
+    if (error) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+
+    const normalizedName = normalizeOptionalString(req.body.name);
+    const normalizedCode = normalizeOptionalString(req.body.code);
+    const duplicateQuery = buildStreamDuplicateQuery({
+      req,
+      branch: resolvedBranch,
+      name: normalizedName || existingStream.name,
+      code: normalizedCode || existingStream.code,
+      excludeId: id,
+    });
+    const duplicate = duplicateQuery ? await Stream.findOne(duplicateQuery) : null;
+    if (duplicate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Stream name or code already exists for this branch',
+      });
+    }
+
+    const updatePayload = {
+      ...req.body,
+      branch: resolvedBranch,
+      ...(normalizedName !== undefined ? { name: normalizedName } : {}),
+      ...(typeof req.body.code === 'string' ? { code: normalizedCode } : {}),
+      ...(typeof req.body.description === 'string' ? { description: normalizeOptionalString(req.body.description) } : {}),
+      updatedBy: req.user._id,
+    };
     
     const stream = await Stream.findOneAndUpdate(
-      { _id: id, tenant: req.schoolId, isDeleted: false },
-      { ...req.body, updatedBy: req.user._id },
+      { _id: id, tenant: req.schoolId, isDeleted: { $ne: true } },
+      updatePayload,
       { new: true }
     );
 
@@ -1069,7 +1295,7 @@ export const deleteStream = async (req, res) => {
     const { id } = req.params;
     
     const stream = await Stream.findOneAndUpdate(
-      { _id: id, tenant: req.schoolId, isDeleted: false },
+      { _id: id, tenant: req.schoolId, isDeleted: { $ne: true } },
       { 
         isDeleted: true, 
         deletedAt: new Date(), 
