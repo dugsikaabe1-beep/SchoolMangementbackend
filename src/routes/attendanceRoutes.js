@@ -10,6 +10,7 @@ import {
   generatePersonalQR,
   verifyPersonalQR,
   bulkQRAttendance,
+  getActiveQR,
   getAttendanceMethodStats,
   getAttendanceByMethod,
   exportAttendance,
@@ -54,6 +55,7 @@ router.use(asyncHandler(protect));
 router.use(asyncHandler(injectAcademicYear));
 
 router.post('/qr/generate', generateAttendanceQR);
+router.get('/qr/active', getActiveQR);
 router.post('/qr/verify', verifyQRAttendance);
 router.post('/qr/check-out/:attendanceId', checkOutQR);
 router.post('/qr/revoke', revokeQR);

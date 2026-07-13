@@ -185,6 +185,56 @@ export const generateAttendanceQR = asyncHandler(async (req, res) => {
   });
 });
 
+export const getActiveQR = asyncHandler(async (req, res) => {
+  const { classId, subjectId, date } = req.query;
+  const qrDate = date || new Date().toISOString().split('T')[0];
+
+  const query = {
+    school: req.schoolId,
+    branch: req.branchId,
+    type: 'SESSION',
+    isRevoked: false,
+    expiresAt: { $gt: new Date() },
+    date: new Date(qrDate)
+  };
+  if (classId) query.class = classId;
+  if (subjectId) query.subject = subjectId;
+
+  const token = await QrCodeToken.findOne(query)
+    .sort({ createdAt: -1 })
+    .populate('class', 'name')
+    .populate('subject', 'name');
+
+  if (!token) {
+    return res.json({ success: true, activeQR: null });
+  }
+
+  const qrPayload = {
+    v: 1,
+    s: token.school.toString(),
+    b: (token.branch || '').toString(),
+    c: token.class?._id?.toString() || token.class?.toString(),
+    sub: token.subject?._id?.toString() || token.subject?.toString(),
+    d: token.date instanceof Date ? token.date.toISOString().split('T')[0] : qrDate,
+    t: token.createdAt.getTime(),
+    n: token.nonce
+  };
+
+  res.json({
+    success: true,
+    activeQR: {
+      qrCode: JSON.stringify(qrPayload),
+      qrHash: token.hash,
+      expiresAt: token.expiresAt,
+      expiresInMinutes: Math.max(0, Math.floor((token.expiresAt.getTime() - Date.now()) / 60000)),
+      class: token.class,
+      subject: token.subject,
+      usageCount: token.usageCount,
+      usedBy: token.usedBy || []
+    }
+  });
+});
+
 export const verifyQRAttendance = asyncHandler(async (req, res) => {
   const { qrCode, location, deviceInfo } = req.body;
 
@@ -1207,23 +1257,16 @@ export const verifyRFIDAttendance = asyncHandler(async (req, res) => {
 
 export const getRFIDRegistrationStatus = asyncHandler(async (req, res) => {
   const { userId } = req.params;
-
-  const targetUser = await User.findOne({
-    _id: userId,
-    school: req.schoolId,
-    isDeleted: false
-  }).select('verificationData.rfidTag verificationData.rfidStatus verificationData.rfidRegisteredAt name customId role');
-
-  if (!targetUser) {
-    return res.status(404).json({ success: false, message: 'User not found' });
-  }
-
+  const targetUser = await User.findOne({ _id: userId, school: req.schoolId, isDeleted: false })
+    .select('verificationData name customId role');
+  if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+  const vd = targetUser.verificationData || {};
   res.json({
     success: true,
-    hasRFID: !!targetUser.verificationData?.rfidTag,
-    rfidTag: targetUser.verificationData?.rfidTag || null,
-    rfidStatus: targetUser.verificationData?.rfidStatus || 'none',
-    registeredAt: targetUser.verificationData?.rfidRegisteredAt || null,
+    hasRFID: !!(vd.rfidTag),
+    rfidTag: vd.rfidTag || null,
+    rfidStatus: vd.rfidStatus || 'none',
+    registeredAt: vd.rfidRegisteredAt || null,
     user: { name: targetUser.name, customId: targetUser.customId, role: targetUser.role }
   });
 });
@@ -1503,18 +1546,19 @@ export const getNFCRegistrationStatus = asyncHandler(async (req, res) => {
     _id: userId,
     school: req.schoolId,
     isDeleted: false
-  }).select('verificationData.nfcId verificationData.nfcStatus verificationData.nfcRegisteredAt name customId role');
+  }).select('verificationData name customId role');
 
   if (!targetUser) {
     return res.status(404).json({ success: false, message: 'User not found' });
   }
 
+  const vd = targetUser.verificationData || {};
   res.json({
     success: true,
-    hasNFC: !!targetUser.verificationData?.nfcId,
-    nfcId: targetUser.verificationData?.nfcId || null,
-    nfcStatus: targetUser.verificationData?.nfcStatus || 'none',
-    registeredAt: targetUser.verificationData?.nfcRegisteredAt || null,
+    hasNFC: !!(vd.nfcId),
+    nfcId: vd.nfcId || null,
+    nfcStatus: vd.nfcStatus || 'none',
+    registeredAt: vd.nfcRegisteredAt || null,
     user: { name: targetUser.name, customId: targetUser.customId, role: targetUser.role }
   });
 });
@@ -1706,18 +1750,21 @@ export const getFaceRegistrationStatus = asyncHandler(async (req, res) => {
     _id: userId,
     school: req.schoolId,
     isDeleted: false
-  }).select('verificationData.faceStatus verificationData.faceRegisteredAt verificationData.faceEnrollmentCount name customId role');
+  }).select('verificationData name customId role');
 
   if (!targetUser) {
     return res.status(404).json({ success: false, message: 'User not found' });
   }
 
+  const vd = targetUser.verificationData || {};
+  const hasEmbeddings = Array.isArray(vd.faceEmbeddings) && vd.faceEmbeddings.length > 0;
+
   res.json({
     success: true,
-    hasFaceData: !!targetUser.verificationData?.faceStatus,
-    faceStatus: targetUser.verificationData?.faceStatus || 'none',
-    registeredAt: targetUser.verificationData?.faceRegisteredAt || null,
-    enrollmentCount: targetUser.verificationData?.faceEnrollmentCount || 0,
+    hasFaceData: hasEmbeddings,
+    faceStatus: vd.faceStatus || 'none',
+    registeredAt: vd.faceRegisteredAt || null,
+    enrollmentCount: vd.faceEnrollmentCount || (hasEmbeddings ? vd.faceEmbeddings.length : 0),
     user: { name: targetUser.name, customId: targetUser.customId, role: targetUser.role }
   });
 });
@@ -1899,13 +1946,14 @@ export const getFingerprintRegistrationStatus = asyncHandler(async (req, res) =>
     _id: userId,
     school: req.schoolId,
     isDeleted: false
-  }).select('verificationData.fingerprints verificationData.fingerprintStatus verificationData.fingerprintRegisteredAt name customId role');
+  }).select('verificationData name customId role');
 
   if (!targetUser) {
     return res.status(404).json({ success: false, message: 'User not found' });
   }
 
-  const fingerprints = (targetUser.verificationData?.fingerprints || []).map(f => ({
+  const vd = targetUser.verificationData || {};
+  const fingerprints = (vd.fingerprints || []).map(f => ({
     fingerIndex: f.fingerIndex,
     status: f.status,
     enrolledAt: f.enrolledAt
@@ -1914,8 +1962,8 @@ export const getFingerprintRegistrationStatus = asyncHandler(async (req, res) =>
   res.json({
     success: true,
     hasFingerprint: fingerprints.length > 0,
-    fingerprintStatus: targetUser.verificationData?.fingerprintStatus || 'none',
-    registeredAt: targetUser.verificationData?.fingerprintRegisteredAt || null,
+    fingerprintStatus: vd.fingerprintStatus || 'none',
+    registeredAt: vd.fingerprintRegisteredAt || null,
     enrolledFingers: fingerprints,
     totalEnrolled: fingerprints.length,
     user: { name: targetUser.name, customId: targetUser.customId, role: targetUser.role }
