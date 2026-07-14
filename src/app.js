@@ -139,6 +139,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import examRoutes from './routes/examRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import leaveRoutes from './routes/leaveRoutes.js';
+import expenseRoutes from './routes/expenseRoutes.js';
 
 import { detectTenant, injectBranch, injectOwnership } from './middlewares/tenantMiddleware.js';
 import { asyncHandler } from './middlewares/asyncHandler.js';
@@ -363,12 +364,14 @@ app.use('/api/v1/attendance', attendanceRoutes);
 app.use('/api/v1/exams', examRoutes);
 app.use('/api/v1/payroll', payrollRoutes);
 app.use('/api/v1/leaves', leaveRoutes);
+app.use('/api/v1/expenses', expenseRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/school-features', schoolFeatureRoutes);
 app.use('/api/backups', backupRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/leaves', leaveRoutes);
+app.use('/api/expenses', expenseRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);

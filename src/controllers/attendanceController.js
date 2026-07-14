@@ -10,8 +10,120 @@ import { sendNotification } from '../utils/notificationService.js';
 import { getRedisClient } from '../config/redis.js';
 import crypto from 'crypto';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
 const QR_EXPIRY_MINUTES = 5;
 const QR_REDIS_PREFIX = 'qr:attendance:';
+
+// Staff roles — biometric attendance is ONLY for these roles, never for students
+const STAFF_ROLES = [
+  'teacher', 'schooladmin', 'school_admin', 'admin',
+  'accountant', 'branchmanager', 'branch_manager',
+];
+
+// Late threshold in minutes past the shift start
+const LATE_THRESHOLD_MINUTES = 15;
+// Shift start hour (24h)
+const SHIFT_START_HOUR = 8;
+// Standard working hours
+const STANDARD_HOURS = 8;
+
+// ── Helper: compute attendance status from check-in time ─────────────────────
+function computeStaffStatus(checkInTime, dateStr) {
+  const shiftStart = new Date(dateStr);
+  shiftStart.setHours(SHIFT_START_HOUR, 0, 0, 0);
+  const lateAt = new Date(shiftStart.getTime() + LATE_THRESHOLD_MINUTES * 60000);
+  if (checkInTime > lateAt) {
+    const lateMinutes = Math.round((checkInTime - shiftStart) / 60000);
+    return { status: 'Late', lateMinutes };
+  }
+  return { status: 'Present', lateMinutes: 0 };
+}
+
+// ── Helper: compute working hours on checkout ─────────────────────────────────
+function computeWorkingHours(checkIn, checkOut) {
+  if (!checkIn || !checkOut) return { workingHours: 0, overtimeHours: 0 };
+  const hours = (checkOut - checkIn) / 3600000;
+  const overtime = Math.max(0, hours - STANDARD_HOURS);
+  return { workingHours: Math.round(hours * 100) / 100, overtimeHours: Math.round(overtime * 100) / 100 };
+}
+
+// ── Helper: notify employee of attendance ────────────────────────────────────
+async function notifyEmployee(user, attendance, schoolId, branchId) {
+  const typeLabel = attendance.checkOutTime ? 'Check-Out' : 'Check-In';
+  const timeStr = (attendance.checkOutTime || attendance.checkInTime)?.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  sendNotification({
+    recipientId: user._id,
+    schoolId,
+    branchId,
+    title: `Attendance ${typeLabel} Recorded`,
+    message: `${typeLabel} at ${timeStr}. Status: ${attendance.status}.`,
+    type: 'attendance',
+    priority: 'low',
+    channels: ['in_app'],
+    createdBy: user._id,
+  }).catch(() => {});
+}
+
+// ── Helper: mark or checkout staff attendance ────────────────────────────────
+async function markStaffAttendance({ employee, method, location, deviceInfo, verificationData, schoolId, branchId, academicYearId }) {
+  const today = new Date();
+  const dateStr = today.toISOString().split('T')[0];
+  const dateOnly = new Date(dateStr);
+
+  // Check for existing record today (same method → checkout flow)
+  const existing = await Attendance.findOne({
+    user: employee._id,
+    date: dateOnly,
+    method,
+    isDeleted: false,
+  });
+
+  if (existing && !existing.checkOutTime) {
+    // Checkout
+    const checkOutTime = new Date();
+    const { workingHours, overtimeHours } = computeWorkingHours(existing.checkInTime, checkOutTime);
+    let finalStatus = existing.status;
+    if (workingHours < STANDARD_HOURS / 2) finalStatus = 'Half_Day';
+    else if (workingHours < STANDARD_HOURS - 0.5) finalStatus = 'Early_Leave';
+
+    existing.checkOutTime   = checkOutTime;
+    existing.workingHours   = workingHours;
+    existing.overtimeHours  = overtimeHours;
+    existing.status         = finalStatus;
+    if (location) existing.location = location;
+    await existing.save();
+    return { record: existing, type: 'CHECK_OUT', employee };
+  }
+
+  if (existing && existing.checkOutTime) {
+    return { alreadyComplete: true, record: existing, employee };
+  }
+
+  // New check-in
+  const checkInTime = new Date();
+  const { status, lateMinutes } = computeStaffStatus(checkInTime, dateStr);
+
+  const record = await Attendance.create({
+    user:             employee._id,
+    userRole:         employee.role,
+    department:       employee.department || '',
+    designation:      employee.designation || '',
+    date:             dateOnly,
+    checkInTime,
+    status,
+    lateMinutes,
+    method,
+    location:         location || {},
+    deviceInfo:       deviceInfo || {},
+    verificationData: verificationData || {},
+    school:           schoolId,
+    branch:           branchId,
+    academicYear:     academicYearId,
+    markedBy:         employee._id,
+  });
+
+  return { record, type: 'CHECK_IN', employee };
+}
 
 function generateQRHash(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -1164,94 +1276,57 @@ export const registerRFIDTag = asyncHandler(async (req, res) => {
 });
 
 export const verifyRFIDAttendance = asyncHandler(async (req, res) => {
-  const { rfidTag, location, deviceInfo, classId, subjectId } = req.body;
+  const { rfidTag, location, deviceInfo } = req.body;
+  if (!rfidTag) return res.status(400).json({ success: false, message: 'RFID tag is required' });
 
-  if (!rfidTag) {
-    return res.status(400).json({ success: false, message: 'RFID tag is required' });
-  }
-
-  const targetUser = await User.findOne({
+  // Auto-identify: find the staff member by their RFID tag — NO manual selection
+  const employee = await User.findOne({
     school: req.schoolId,
     'verificationData.rfidTag': rfidTag,
     'verificationData.rfidStatus': 'active',
-    role: { $in: ['student', 'teacher', 'employee'] },
+    role: { $in: STAFF_ROLES },
     isDeleted: false,
-    status: 'active'
-  });
+    status: 'active',
+  }).select('name customId role department designation branch verificationData');
 
-  if (!targetUser) {
-    return res.status(404).json({ success: false, message: 'RFID tag not registered or inactive' });
+  if (!employee) {
+    return res.status(404).json({
+      success: false,
+      message: 'RFID card not recognized, inactive, or belongs to a student',
+    });
   }
 
-  const today = new Date().toISOString().split('T')[0];
-
-  const existingAttendance = await Attendance.findOne({
-    user: targetUser._id,
-    date: new Date(today),
+  const result = await markStaffAttendance({
+    employee,
     method: 'RFID',
-    isDeleted: false
-  });
-
-  if (existingAttendance) {
-    if (!existingAttendance.checkOutTime) {
-      existingAttendance.checkOutTime = new Date();
-      if (location) existingAttendance.location = location;
-      await existingAttendance.save();
-
-      await logAction(req, {
-        action: 'RFID_ATTENDANCE_CHECKOUT',
-        module: 'ATTENDANCE',
-        targetId: existingAttendance._id,
-        details: { userId: targetUser._id, rfidTag }
-      });
-
-      return res.json({
-        success: true,
-        message: 'Check-out recorded',
-        attendance: existingAttendance,
-        type: 'CHECK_OUT',
-        student: { name: targetUser.name, customId: targetUser.customId }
-      });
-    }
-
-    return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
-  }
-
-  const resolvedClassId = classId || targetUser.class;
-  if (!resolvedClassId) {
-    return res.status(400).json({ success: false, message: 'No class specified' });
-  }
-
-  const attendance = await Attendance.create({
-    user: targetUser._id,
-    class: resolvedClassId,
-    subject: subjectId || null,
-    date: new Date(today),
-    status: 'Present',
-    method: 'RFID',
-    checkInTime: new Date(),
-    location: location || {},
-    deviceInfo: deviceInfo || {},
+    location,
+    deviceInfo,
     verificationData: { rfidTag },
-    school: req.schoolId,
-    branch: req.branchId,
-    academicYear: req.academicYearId,
-    markedBy: req.user._id
+    schoolId: req.schoolId,
+    branchId: req.branchId || employee.branch,
+    academicYearId: req.academicYearId,
   });
 
+  if (result.alreadyComplete) {
+    return res.status(400).json({ success: false, message: 'Attendance already fully recorded for today' });
+  }
+
+  await notifyEmployee(employee, result.record, req.schoolId, req.branchId);
   await logAction(req, {
-    action: 'RFID_ATTENDANCE_MARKED',
+    action: result.type === 'CHECK_OUT' ? 'RFID_CHECKOUT' : 'RFID_CHECKIN',
     module: 'ATTENDANCE',
-    targetId: attendance._id,
-    details: { method: 'RFID', userId: targetUser._id, rfidTag }
+    targetId: result.record._id,
+    details: { employeeId: employee._id, rfidTag, type: result.type },
   });
 
-  res.json({
+  return res.json({
     success: true,
-    message: 'Attendance marked successfully',
-    attendance,
-    type: 'CHECK_IN',
-    student: { name: targetUser.name, customId: targetUser.customId }
+    message: result.type === 'CHECK_OUT'
+      ? `Check-out recorded — ${employee.name}`
+      : `Welcome ${employee.name} — Check-in recorded`,
+    type: result.type,
+    attendance: result.record,
+    employee: { name: employee.name, customId: employee.customId, role: employee.role, department: employee.department },
   });
 });
 
@@ -1455,87 +1530,41 @@ export const registerNFCId = asyncHandler(async (req, res) => {
 });
 
 export const verifyNFCAttendance = asyncHandler(async (req, res) => {
-  const { nfcId, location, deviceInfo, classId, subjectId } = req.body;
+  const { nfcId, location, deviceInfo } = req.body;
+  if (!nfcId) return res.status(400).json({ success: false, message: 'NFC ID is required' });
 
-  if (!nfcId) {
-    return res.status(400).json({ success: false, message: 'NFC ID is required' });
-  }
-
-  const targetUser = await User.findOne({
+  const employee = await User.findOne({
     school: req.schoolId,
     'verificationData.nfcId': nfcId,
     'verificationData.nfcStatus': 'active',
-    role: { $in: ['student', 'teacher', 'employee'] },
+    role: { $in: STAFF_ROLES },
     isDeleted: false,
-    status: 'active'
-  });
+    status: 'active',
+  }).select('name customId role department designation branch verificationData');
 
-  if (!targetUser) {
-    return res.status(404).json({ success: false, message: 'NFC tag not registered or inactive' });
+  if (!employee) {
+    return res.status(404).json({ success: false, message: 'NFC tag not recognized or inactive' });
   }
 
-  const today = new Date().toISOString().split('T')[0];
-
-  const existingAttendance = await Attendance.findOne({
-    user: targetUser._id,
-    date: new Date(today),
-    method: 'NFC',
-    isDeleted: false
-  });
-
-  if (existingAttendance) {
-    if (!existingAttendance.checkOutTime) {
-      existingAttendance.checkOutTime = new Date();
-      if (location) existingAttendance.location = location;
-      await existingAttendance.save();
-
-      return res.json({
-        success: true,
-        message: 'Check-out recorded',
-        attendance: existingAttendance,
-        type: 'CHECK_OUT',
-        student: { name: targetUser.name, customId: targetUser.customId }
-      });
-    }
-
-    return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
-  }
-
-  const resolvedClassId = classId || targetUser.class;
-  if (!resolvedClassId) {
-    return res.status(400).json({ success: false, message: 'No class specified' });
-  }
-
-  const attendance = await Attendance.create({
-    user: targetUser._id,
-    class: resolvedClassId,
-    subject: subjectId || null,
-    date: new Date(today),
-    status: 'Present',
-    method: 'NFC',
-    checkInTime: new Date(),
-    location: location || {},
-    deviceInfo: deviceInfo || {},
+  const result = await markStaffAttendance({
+    employee, method: 'NFC', location, deviceInfo,
     verificationData: { nfcId },
-    school: req.schoolId,
-    branch: req.branchId,
-    academicYear: req.academicYearId,
-    markedBy: req.user._id
+    schoolId: req.schoolId,
+    branchId: req.branchId || employee.branch,
+    academicYearId: req.academicYearId,
   });
 
-  await logAction(req, {
-    action: 'NFC_ATTENDANCE_MARKED',
-    module: 'ATTENDANCE',
-    targetId: attendance._id,
-    details: { method: 'NFC', userId: targetUser._id, nfcId }
-  });
+  if (result.alreadyComplete) return res.status(400).json({ success: false, message: 'Attendance already fully recorded for today' });
 
-  res.json({
+  await notifyEmployee(employee, result.record, req.schoolId, req.branchId);
+  await logAction(req, { action: result.type === 'CHECK_OUT' ? 'NFC_CHECKOUT' : 'NFC_CHECKIN', module: 'ATTENDANCE', targetId: result.record._id });
+
+  return res.json({
     success: true,
-    message: 'Attendance marked successfully',
-    attendance,
-    type: 'CHECK_IN',
-    student: { name: targetUser.name, customId: targetUser.customId }
+    message: result.type === 'CHECK_OUT' ? `Check-out recorded — ${employee.name}` : `Welcome ${employee.name} — Check-in recorded`,
+    type: result.type,
+    attendance: result.record,
+    employee: { name: employee.name, customId: employee.customId, role: employee.role, department: employee.department },
   });
 });
 
@@ -1638,108 +1667,87 @@ export const registerFaceData = asyncHandler(async (req, res) => {
 export const verifyFaceAttendance = asyncHandler(async (req, res) => {
   // Accept both array form (faceEmbeddings) and single-vector form (faceDescriptor)
   const rawEmbeddings = req.body.faceEmbeddings || (req.body.faceDescriptor ? [req.body.faceDescriptor] : null);
-  const { location, deviceInfo, classId, subjectId, userId: hintUserId } = req.body;
+  const { location, deviceInfo, livenessScore, antiSpoofScore } = req.body;
 
   if (!rawEmbeddings || !Array.isArray(rawEmbeddings) || rawEmbeddings.length === 0) {
-    return res.status(400).json({ success: false, message: 'faceEmbeddings (or faceDescriptor) array is required' });
+    return res.status(400).json({ success: false, message: 'faceEmbeddings are required' });
   }
 
-  const faceEmbeddings = rawEmbeddings;
-
-  const allUsers = await User.find({
+  // Load ALL enrolled STAFF face data — no student faces
+  const allStaff = await User.find({
     school: req.schoolId,
     'verificationData.faceStatus': 'active',
     'verificationData.faceEmbeddings': { $exists: true, $ne: [] },
-    role: { $in: ['student', 'teacher', 'employee'] },
+    role: { $in: STAFF_ROLES },
     isDeleted: false,
-    status: 'active'
-  }).select('name customId role class branch verificationData.faceEmbeddings');
+    status: 'active',
+  }).select('name customId role department designation branch verificationData');
 
-  if (allUsers.length === 0) {
-    return res.status(404).json({ success: false, message: 'No enrolled faces found' });
+  if (allStaff.length === 0) {
+    return res.status(404).json({ success: false, message: 'No enrolled staff faces found. Please enroll staff first.' });
   }
 
+  // Euclidean distance matching
   let bestMatch = null;
   let bestScore = Infinity;
   const THRESHOLD = 0.6;
 
-  for (const user of allUsers) {
-    const storedEmbeddings = user.verificationData?.faceEmbeddings || [];
-    for (const storedEmb of storedEmbeddings) {
-      for (const inputEmb of faceEmbeddings) {
-        if (storedEmb.length !== inputEmb.length) continue;
-        let distance = 0;
-        for (let i = 0; i < storedEmb.length; i++) {
-          distance += (storedEmb[i] - inputEmb[i]) ** 2;
-        }
-        distance = Math.sqrt(distance);
-        if (distance < bestScore) {
-          bestScore = distance;
-          bestMatch = user;
-        }
+  for (const staffMember of allStaff) {
+    const stored = staffMember.verificationData?.faceEmbeddings || [];
+    for (const storedEmb of stored) {
+      for (const inputEmb of rawEmbeddings) {
+        if (!Array.isArray(storedEmb) || !Array.isArray(inputEmb) || storedEmb.length !== inputEmb.length) continue;
+        let dist = 0;
+        for (let i = 0; i < storedEmb.length; i++) dist += (storedEmb[i] - inputEmb[i]) ** 2;
+        dist = Math.sqrt(dist);
+        if (dist < bestScore) { bestScore = dist; bestMatch = staffMember; }
       }
     }
   }
 
   if (!bestMatch || bestScore > THRESHOLD) {
-    await logAction(req, {
-      action: 'FACE_RECOGNITION_FAILED',
-      module: 'ATTENDANCE',
-      details: { bestScore, threshold: THRESHOLD }
+    await logAction(req, { action: 'FACE_RECOGNITION_NO_MATCH', module: 'ATTENDANCE', details: { bestScore, threshold: THRESHOLD } });
+    return res.status(404).json({
+      success: false,
+      message: 'Face not recognized. Please ensure good lighting and face is clearly visible.',
+      confidence: bestScore < Infinity ? +((1 - Math.min(bestScore, 1)).toFixed(3)) : 0,
     });
-
-    return res.status(404).json({ success: false, message: 'Face not recognized', confidence: bestScore ? (1 - bestScore).toFixed(4) : 0 });
   }
 
-  const confidence = 1 - bestScore;
-  const today = new Date().toISOString().split('T')[0];
+  const confidence = +((1 - Math.min(bestScore, 1)).toFixed(3));
 
-  const existingAttendance = await Attendance.findOne({
-    user: bestMatch._id,
-    date: new Date(today),
+  const result = await markStaffAttendance({
+    employee: bestMatch,
     method: 'FACE_RECOGNITION',
-    isDeleted: false
+    location,
+    deviceInfo,
+    verificationData: { faceMatchScore: confidence, livenessScore, antiSpoofScore },
+    schoolId: req.schoolId,
+    branchId: req.branchId || bestMatch.branch,
+    academicYearId: req.academicYearId,
   });
 
-  if (existingAttendance) {
-    return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
+  if (result.alreadyComplete) {
+    return res.status(400).json({ success: false, message: 'Attendance already fully recorded for today' });
   }
 
-  const resolvedClassId = classId || bestMatch.class;
-  if (!resolvedClassId) {
-    return res.status(400).json({ success: false, message: 'No class specified' });
-  }
-
-  const attendance = await Attendance.create({
-    user: bestMatch._id,
-    class: resolvedClassId,
-    subject: subjectId || null,
-    date: new Date(today),
-    status: 'Present',
-    method: 'FACE_RECOGNITION',
-    checkInTime: new Date(),
-    location: location || {},
-    deviceInfo: deviceInfo || {},
-    verificationData: { faceMatchScore: confidence },
-    school: req.schoolId,
-    branch: req.branchId,
-    academicYear: req.academicYearId,
-    markedBy: req.user._id
-  });
-
+  await notifyEmployee(bestMatch, result.record, req.schoolId, req.branchId);
   await logAction(req, {
-    action: 'FACE_ATTENDANCE_MARKED',
+    action: result.type === 'CHECK_OUT' ? 'FACE_CHECKOUT' : 'FACE_CHECKIN',
     module: 'ATTENDANCE',
-    targetId: attendance._id,
-    details: { method: 'FACE_RECOGNITION', userId: bestMatch._id, confidence }
+    targetId: result.record._id,
+    details: { employeeId: bestMatch._id, confidence, type: result.type },
   });
 
-  res.json({
+  return res.json({
     success: true,
-    message: 'Attendance marked successfully',
-    attendance,
+    message: result.type === 'CHECK_OUT'
+      ? `Check-out recorded — ${bestMatch.name}`
+      : `Welcome ${bestMatch.name}! Check-in recorded.`,
+    type: result.type,
+    attendance: result.record,
     confidence,
-    student: { name: bestMatch.name, customId: bestMatch.customId, role: bestMatch.role }
+    employee: { name: bestMatch.name, customId: bestMatch.customId, role: bestMatch.role, department: bestMatch.department },
   });
 });
 
@@ -1853,89 +1861,53 @@ export const registerFingerprintTemplate = asyncHandler(async (req, res) => {
 });
 
 export const verifyFingerprintAttendance = asyncHandler(async (req, res) => {
-  const { fingerprintTemplate, location, deviceInfo, classId, subjectId } = req.body;
-
+  const { fingerprintTemplate, location, deviceInfo } = req.body;
   if (!fingerprintTemplate) {
     return res.status(400).json({ success: false, message: 'fingerprintTemplate is required' });
   }
 
-  const targetUser = await User.findOne({
+  // Auto-identify staff by fingerprint — staff only, no students
+  const employee = await User.findOne({
     school: req.schoolId,
-    'verificationData.fingerprints': {
-      $elemMatch: { template: fingerprintTemplate, status: 'active' }
-    },
+    'verificationData.fingerprints': { $elemMatch: { template: fingerprintTemplate, status: 'active' } },
     'verificationData.fingerprintStatus': 'active',
-    role: { $in: ['student', 'teacher', 'employee'] },
+    role: { $in: STAFF_ROLES },
     isDeleted: false,
-    status: 'active'
-  });
+    status: 'active',
+  }).select('name customId role department designation branch verificationData');
 
-  if (!targetUser) {
+  if (!employee) {
     return res.status(404).json({ success: false, message: 'Fingerprint not recognized' });
   }
 
-  const today = new Date().toISOString().split('T')[0];
-
-  const existingAttendance = await Attendance.findOne({
-    user: targetUser._id,
-    date: new Date(today),
-    method: 'FINGERPRINT',
-    isDeleted: false
-  });
-
-  if (existingAttendance) {
-    if (!existingAttendance.checkOutTime) {
-      existingAttendance.checkOutTime = new Date();
-      if (location) existingAttendance.location = location;
-      await existingAttendance.save();
-
-      return res.json({
-        success: true,
-        message: 'Check-out recorded',
-        attendance: existingAttendance,
-        type: 'CHECK_OUT',
-        student: { name: targetUser.name, customId: targetUser.customId }
-      });
-    }
-
-    return res.status(400).json({ success: false, message: 'Attendance already marked for today' });
-  }
-
-  const resolvedClassId = classId || targetUser.class;
-  if (!resolvedClassId) {
-    return res.status(400).json({ success: false, message: 'No class specified' });
-  }
-
-  const attendance = await Attendance.create({
-    user: targetUser._id,
-    class: resolvedClassId,
-    subject: subjectId || null,
-    date: new Date(today),
-    status: 'Present',
-    method: 'FINGERPRINT',
-    checkInTime: new Date(),
-    location: location || {},
-    deviceInfo: deviceInfo || {},
+  const result = await markStaffAttendance({
+    employee, method: 'FINGERPRINT', location, deviceInfo,
     verificationData: { fingerprintVerified: true },
-    school: req.schoolId,
-    branch: req.branchId,
-    academicYear: req.academicYearId,
-    markedBy: req.user._id
+    schoolId: req.schoolId,
+    branchId: req.branchId || employee.branch,
+    academicYearId: req.academicYearId,
   });
 
+  if (result.alreadyComplete) {
+    return res.status(400).json({ success: false, message: 'Attendance already fully recorded for today' });
+  }
+
+  await notifyEmployee(employee, result.record, req.schoolId, req.branchId);
   await logAction(req, {
-    action: 'FINGERPRINT_ATTENDANCE_MARKED',
+    action: result.type === 'CHECK_OUT' ? 'FINGERPRINT_CHECKOUT' : 'FINGERPRINT_CHECKIN',
     module: 'ATTENDANCE',
-    targetId: attendance._id,
-    details: { method: 'FINGERPRINT', userId: targetUser._id }
+    targetId: result.record._id,
+    details: { employeeId: employee._id, type: result.type },
   });
 
-  res.json({
+  return res.json({
     success: true,
-    message: 'Attendance marked successfully',
-    attendance,
-    type: 'CHECK_IN',
-    student: { name: targetUser.name, customId: targetUser.customId }
+    message: result.type === 'CHECK_OUT'
+      ? `Check-out recorded — ${employee.name}`
+      : `Welcome ${employee.name} — Check-in recorded`,
+    type: result.type,
+    attendance: result.record,
+    employee: { name: employee.name, customId: employee.customId, role: employee.role, department: employee.department },
   });
 });
 

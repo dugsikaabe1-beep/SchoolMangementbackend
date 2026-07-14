@@ -599,6 +599,16 @@ export const requestExam = async (req, res) => {
       });
     }
 
+    const academicYearId = req.academicYearId || req.body.academicYear;
+    if (!academicYearId) {
+      return res.status(400).json({
+        success: false,
+        message: 'academicYear is required.',
+        userMessage: 'No academic year found. Please set an active academic year first.',
+        errors: { academicYear: 'academicYear is required.' }
+      });
+    }
+
     const exam = await Exam.create({
       name,
       term,
@@ -609,7 +619,8 @@ export const requestExam = async (req, res) => {
       status: 'Pending',
       requestedBy: req.user._id,
       school: schoolId,
-      branch: branchId
+      branch: branchId,
+      academicYear: academicYearId
     });
 
     res.status(201).json({

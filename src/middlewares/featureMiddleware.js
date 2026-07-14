@@ -1,17 +1,5 @@
 import School from '../models/School.js';
-import { isFeatureEnabled, getPlanFeaturesForSchool } from '../utils/featureAccess.js';
-
-// List of all communication features that must never be restricted
-const COMMUNICATION_FEATURES = [
-  'announcements',
-  'notifications',
-  'push-notifications',
-  'sms',
-  'email-automation',
-  'whatsapp',
-  'bulk-messaging',
-  'automated-alerts'
-];
+import { isFeatureEnabled, COMMUNICATION_FEATURES } from '../utils/featureAccess.js';
 
 /**
  * Feature Control Middleware
@@ -22,23 +10,15 @@ const COMMUNICATION_FEATURES = [
 export const checkModuleAccess = (moduleCode) => {
   return async (req, res, next) => {
     try {
-      console.log(`[FeatureControl] Checking access for module: ${moduleCode}`);
-      console.log(`[FeatureControl] req.schoolId:`, req.schoolId);
-      
-      // Always allow communication features - no checks needed
       if (COMMUNICATION_FEATURES.includes(moduleCode)) {
-        console.log(`[FeatureControl] ${moduleCode} is a core communication feature - skipping check`);
         return next();
       }
       
       if (!req.schoolId) {
-        console.log(`[FeatureControl] No schoolId found, skipping feature check`);
-        return next(); // Skip for super-admins or non-tenant contexts if needed
+        return next();
       }
 
-      // 1. Fetch school with its plan details
       const school = await School.findById(req.schoolId).populate('subscription.plan');
-      console.log(`[FeatureControl] School found:`, school?.name, "sub status:", school?.subscription?.status);
       
       if (!school) {
         return res.status(404).json({
@@ -47,7 +27,6 @@ export const checkModuleAccess = (moduleCode) => {
         });
       }
 
-      // 2. Check if subscription is active
       const subStatus = school.subscription?.status;
       if (['Expired', 'Suspended', 'Cancelled'].includes(subStatus) && school.settings?.restrictedModeOnExpiry) {
         return res.status(403).json({
@@ -58,9 +37,6 @@ export const checkModuleAccess = (moduleCode) => {
       }
 
       const enabled = await isFeatureEnabled(req.schoolId, moduleCode);
-      const allFeatures = await getPlanFeaturesForSchool(req.schoolId);
-      console.log(`[FeatureControl] Module ${moduleCode} enabled:`, enabled);
-      console.log(`[FeatureControl] All plan features:`, allFeatures);
       
       if (!enabled) {
         return res.status(403).json({

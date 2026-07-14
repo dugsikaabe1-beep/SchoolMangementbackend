@@ -1318,7 +1318,16 @@ export const createExam = async (req, res) => {
   const { name, term, date, classId, subjectId, maxMarks } = req.body;
   const schoolId = req.user.school?._id || req.user.school;
   try {
-    // Resolve branch ID for the exam (defaulting to the class's branch if missing)
+    const academicYearId = req.academicYearId || req.body.academicYear;
+    if (!academicYearId) {
+      return res.status(400).json({
+        success: false,
+        message: 'academicYear is required.',
+        userMessage: 'No academic year found. Please set an active academic year first.',
+        errors: { academicYear: 'academicYear is required.' }
+      });
+    }
+
     let targetBranchId = req.branchId || req.user.branch;
     if (!targetBranchId) {
       const cls = await Class.findById(classId);
@@ -1334,7 +1343,7 @@ export const createExam = async (req, res) => {
       maxMarks,
       school: schoolId,
       branch: targetBranchId,
-      academicYear: req.academicYearId,
+      academicYear: academicYearId,
     });
     res.status(201).json(exam);
   } catch (error) {
@@ -1516,6 +1525,16 @@ export const createExamSession = async (req, res) => {
       });
     }
 
+    const academicYearId = req.academicYearId || req.body.academicYear;
+    if (!academicYearId) {
+      return res.status(400).json({
+        success: false,
+        message: 'academicYear is required.',
+        userMessage: 'No academic year found. Please set an active academic year first.',
+        errors: { academicYear: 'academicYear is required.' }
+      });
+    }
+
     let targetBranchId = branchId || req.user?.branch;
     if (!targetBranchId && classIds.length > 0) {
       const cls = await Class.findById(classIds[0]);
@@ -1529,7 +1548,9 @@ export const createExamSession = async (req, res) => {
       classes: classIds,
       subjects: subjectIds || [],
       school: schoolId,
-      branch: targetBranchId, // Automatic branch ownership
+      branch: targetBranchId,
+      academicYear: academicYearId,
+      createdBy: req.user?._id,
       status: 'Scheduled'
     });
 

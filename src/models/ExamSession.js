@@ -12,7 +12,7 @@ const examSessionSchema = new mongoose.Schema(
     classes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Class' }],
     subjects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Subject' }],
     school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true, index: true },
-    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true, index: true },
+    branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', index: true },
     academicYear: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true, index: true },
     status: { 
       type: String, 
