@@ -16,6 +16,8 @@ import {
   exportAttendance,
   getModuleAttendanceReport,
   validateGeofence,
+  getStaffAttendanceAnalytics,
+  getTodayStaffAttendance,
   registerRFIDTag,
   verifyRFIDAttendance,
   getRFIDRegistrationStatus,
@@ -103,5 +105,7 @@ router.get('/by-method', getAttendanceByMethod);
 router.get('/export', exportAttendance);
 router.get('/module-report', getModuleAttendanceReport);
 router.post('/geofence/validate', validateGeofence);
+router.get('/staff/analytics', getStaffAttendanceAnalytics);
+router.get('/staff/today', getTodayStaffAttendance);
 
 export default router;

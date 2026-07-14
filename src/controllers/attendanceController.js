@@ -2195,3 +2195,189 @@ export const validateGeofence = asyncHandler(async (req, res) => {
 
   res.json({ success: true, isInsideGeofence: distance <= radius, distance: Math.round(distance), allowedRadius: radius });
 });
+
+// ── Unified Staff Attendance Analytics ───────────────────────────────────────
+export const getStaffAttendanceAnalytics = asyncHandler(async (req, res) => {
+  const { startDate, endDate, month, year, department, method } = req.query;
+
+  const base = {
+    school: req.schoolId,
+    isDeleted: false,
+    userRole: { $in: STAFF_ROLES },
+  };
+  if (req.branchId) base.branch = req.branchId;
+  if (method) base.method = method;
+  if (department) base.department = department;
+
+  // Date range
+  const now = new Date();
+  let start, end;
+  if (startDate && endDate) {
+    start = new Date(startDate); end = new Date(endDate);
+  } else if (month && year) {
+    start = new Date(Number(year), Number(month) - 1, 1);
+    end   = new Date(Number(year), Number(month), 0, 23, 59, 59);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  }
+  base.date = { $gte: start, $lte: end };
+
+  const [
+    byStatus,
+    byMethod,
+    byDepartment,
+    lateEmployees,
+    mostAbsent,
+    dailyTrend,
+    workingHoursStats,
+    overtimeStats,
+  ] = await Promise.all([
+    // Status distribution
+    Attendance.aggregate([
+      { $match: base },
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    // Method distribution
+    Attendance.aggregate([
+      { $match: base },
+      { $group: { _id: '$method', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    // By department
+    Attendance.aggregate([
+      { $match: base },
+      { $group: {
+        _id: '$department',
+        present: { $sum: { $cond: [{ $in: ['$status', ['Present', 'Late']] }, 1, 0] } },
+        late:    { $sum: { $cond: [{ $eq: ['$status', 'Late'] }, 1, 0] } },
+        absent:  { $sum: { $cond: [{ $eq: ['$status', 'Absent'] }, 1, 0] } },
+        total:   { $sum: 1 },
+      }},
+      { $sort: { total: -1 } },
+    ]),
+    // Top late employees
+    Attendance.aggregate([
+      { $match: { ...base, status: 'Late' } },
+      { $group: { _id: '$user', count: { $sum: 1 }, totalLateMinutes: { $sum: '$lateMinutes' } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
+      { $unwind: { path: '$u', preserveNullAndEmptyArrays: true } },
+      { $project: { _id: 1, count: 1, totalLateMinutes: 1, name: '$u.name', customId: '$u.customId', department: '$u.department' } },
+    ]),
+    // Most absent employees
+    Attendance.aggregate([
+      { $match: { ...base, status: 'Absent' } },
+      { $group: { _id: '$user', absentDays: { $sum: 1 } } },
+      { $sort: { absentDays: -1 } },
+      { $limit: 10 },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
+      { $unwind: { path: '$u', preserveNullAndEmptyArrays: true } },
+      { $project: { _id: 1, absentDays: 1, name: '$u.name', customId: '$u.customId', department: '$u.department' } },
+    ]),
+    // Daily attendance trend
+    Attendance.aggregate([
+      { $match: base },
+      { $group: {
+        _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+        present: { $sum: { $cond: [{ $in: ['$status', ['Present', 'Late']] }, 1, 0] } },
+        late:    { $sum: { $cond: [{ $eq: ['$status', 'Late'] }, 1, 0] } },
+        absent:  { $sum: { $cond: [{ $eq: ['$status', 'Absent'] }, 1, 0] } },
+        total:   { $sum: 1 },
+      }},
+      { $sort: { _id: 1 } },
+    ]),
+    // Average working hours per employee
+    Attendance.aggregate([
+      { $match: { ...base, workingHours: { $gt: 0 } } },
+      { $group: {
+        _id: '$user',
+        avgHours: { $avg: '$workingHours' },
+        totalHours: { $sum: '$workingHours' },
+        days: { $sum: 1 },
+      }},
+      { $sort: { avgHours: -1 } },
+      { $limit: 15 },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
+      { $unwind: { path: '$u', preserveNullAndEmptyArrays: true } },
+      { $project: { avgHours: 1, totalHours: 1, days: 1, name: '$u.name', customId: '$u.customId' } },
+    ]),
+    // Overtime stats
+    Attendance.aggregate([
+      { $match: { ...base, overtimeHours: { $gt: 0 } } },
+      { $group: {
+        _id: '$user',
+        totalOvertime: { $sum: '$overtimeHours' },
+        days: { $sum: 1 },
+      }},
+      { $sort: { totalOvertime: -1 } },
+      { $limit: 10 },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
+      { $unwind: { path: '$u', preserveNullAndEmptyArrays: true } },
+      { $project: { totalOvertime: 1, days: 1, name: '$u.name', customId: '$u.customId' } },
+    ]),
+  ]);
+
+  // Summary counts
+  const presentCount = byStatus.find(s => s._id === 'Present')?.count || 0;
+  const lateCount    = byStatus.find(s => s._id === 'Late')?.count    || 0;
+  const absentCount  = byStatus.find(s => s._id === 'Absent')?.count  || 0;
+  const totalRecords = byStatus.reduce((s, b) => s + b.count, 0);
+  const attendanceRate = totalRecords > 0
+    ? +((((presentCount + lateCount) / totalRecords) * 100).toFixed(1))
+    : 0;
+
+  res.json({
+    success: true,
+    data: {
+      period: { start, end },
+      summary: { totalRecords, presentCount, lateCount, absentCount, attendanceRate },
+      byStatus,
+      byMethod,
+      byDepartment,
+      lateEmployees,
+      mostAbsent,
+      dailyTrend,
+      workingHoursStats,
+      overtimeStats,
+    },
+  });
+});
+
+// ── Get today's staff attendance feed (live dashboard) ────────────────────────
+export const getTodayStaffAttendance = asyncHandler(async (req, res) => {
+  const today = new Date();
+  const dateOnly = new Date(today.toISOString().split('T')[0]);
+
+  const query = {
+    school: req.schoolId,
+    date: dateOnly,
+    userRole: { $in: STAFF_ROLES },
+    isDeleted: false,
+  };
+  if (req.branchId) query.branch = req.branchId;
+
+  const records = await Attendance.find(query)
+    .populate('user', 'name customId role profileImage department designation')
+    .sort({ checkInTime: -1 })
+    .limit(200);
+
+  const totalStaff = await User.countDocuments({
+    school: req.schoolId,
+    role: { $in: STAFF_ROLES },
+    status: 'active',
+    isDeleted: false,
+  });
+
+  const summary = {
+    present: records.filter(r => r.status === 'Present').length,
+    late:    records.filter(r => r.status === 'Late').length,
+    checkedOut: records.filter(r => r.checkOutTime).length,
+    totalStaff,
+    notYetIn: totalStaff - records.length,
+  };
+
+  res.json({ success: true, data: records, summary });
+});

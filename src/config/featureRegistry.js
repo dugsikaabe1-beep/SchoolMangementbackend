@@ -22,9 +22,12 @@ export const FEATURE_REGISTRY = [
 
   // ── Academic ──────────────────────────────────────────────────────────
   { code: 'attendance',     label: 'Attendance',            category: 'Academic' },
+  { code: 'teacher-attendance', label: 'Staff Attendance',  category: 'Academic' },
   { code: 'schedules',      label: 'Timetable / Schedule',  category: 'Academic' },
   { code: 'academic-calendar',label: 'Academic Calendar',   category: 'Academic' },
   { code: 'exams',          label: 'Exams',                 category: 'Academic' },
+  { code: 'online-exams',   label: 'Online Exams',          category: 'Academic' },
+  { code: 'question-banks', label: 'Question Banks',        category: 'Academic' },
   { code: 'results',        label: 'Results',               category: 'Academic' },
   { code: 'exam-halls',     label: 'Exam Halls',            category: 'Academic' },
   { code: 'certificates',   label: 'Certificates',          category: 'Academic' },
@@ -49,10 +52,12 @@ export const FEATURE_REGISTRY = [
   { code: 'payment-integration', label: 'Payment Integration', category: 'Finance' },
   { code: 'invoices',       label: 'Invoices',              category: 'Finance' },
   { code: 'discounts',      label: 'Discounts',             category: 'Finance' },
+  { code: 'expenses',       label: 'Expense Management',    category: 'Finance' },
   { code: 'revenue-reports',label: 'Revenue Reports',       category: 'Finance' },
   { code: 'enterprise-finance', label: 'Enterprise Finance', category: 'Finance' },
   { code: 'payroll',        label: 'Payroll Management',    category: 'Finance' },
   { code: 'salary-structure', label: 'Salary Structures',   category: 'Finance' },
+  { code: 'leave-management', label: 'Leave Management',    category: 'Finance' },
   { code: 'procurement',    label: 'Procurement',           category: 'Finance' },
   { code: 'revenue-forecast', label: 'Revenue Forecasting', category: 'Finance' },
 
@@ -65,6 +70,12 @@ export const FEATURE_REGISTRY = [
   { code: 'whatsapp',          label: 'WhatsApp Notifications',category: 'Communication' },
   { code: 'bulk-messaging',    label: 'Bulk Messaging',        category: 'Communication' },
   { code: 'automated-alerts',  label: 'Automated Alerts',      category: 'Communication' },
+  { code: 'messaging',         label: 'Messaging Center',      category: 'Communication' },
+  { code: 'delivery-reports',  label: 'Delivery Reports',      category: 'Communication' },
+  { code: 'communication-health',    label: 'Communication Health',    category: 'Communication' },
+  { code: 'communication-preferences',label: 'Communication Preferences',category: 'Communication' },
+  { code: 'communication-usage',      label: 'Communication Analytics',category: 'Communication' },
+  { code: 'invalid-contacts',  label: 'Invalid Contacts',      category: 'Communication' },
 
   // ── Mobile App ────────────────────────────────────────────────────────
   { code: 'parent-app',     label: 'Parent Mobile App',     category: 'Mobile App' },
@@ -91,6 +102,7 @@ export const FEATURE_REGISTRY = [
   { code: 'timeline',          label: 'Activity Timeline',  category: 'Reports' },
   { code: 'business-intelligence', label: 'Business Intelligence', category: 'Reports' },
   { code: 'executive-dashboard', label: 'Executive Dashboard', category: 'Reports' },
+  { code: 'finance-audit',    label: 'Finance Audit Trail', category: 'Reports' },
 
   // ── System ────────────────────────────────────────────────────────────
   { code: 'documents',      label: 'Document Management',   category: 'System' },
@@ -100,8 +112,10 @@ export const FEATURE_REGISTRY = [
   { code: 'onboarding',     label: 'Onboarding Wizard',     category: 'System' },
   { code: 'settings',       label: 'School Settings',       category: 'System' },
   { code: 'support',        label: 'Support Tickets',       category: 'System' },
+  { code: 'help-center',    label: 'Help Center',           category: 'System' },
   { code: 'data-recovery',  label: 'Data Recovery Center',  category: 'System' },
   { code: 'duplicate-detection', label: 'Duplicate Detection', category: 'System' },
+  { code: 'enterprise-suite', label: 'Enterprise Suite',    category: 'System' },
 
   // ── AI & Analytics ────────────────────────────────────────────────────
   { code: 'ai-learning-assistant', label: 'AI Learning Assistant', category: 'AI & Analytics' },
@@ -144,10 +158,10 @@ export const ALL_FEATURE_CODES = FEATURE_REGISTRY.map(f => f.code);
 export const STARTER_FEATURES = [
   'students', 'teachers', 'classes', 'subjects',
   'attendance', 'schedules', 'academic-years',
-  'announcements', 'settings', 'support',
+  'announcements', 'settings', 'support', 'help-center',
   // Core communication features - always included
   'notifications', 'push-notifications', 'email-automation',
-  'bulk-messaging', 'automated-alerts'
+  'bulk-messaging', 'automated-alerts', 'messaging',
 ];
 
 /**
@@ -156,15 +170,17 @@ export const STARTER_FEATURES = [
 export const PROFESSIONAL_FEATURES = [
   ...STARTER_FEATURES,
   'parents', 'sections', 'exams', 'results', 'exam-halls', 'promotions',
-  'finance', 'payment-integration',
+  'online-exams', 'question-banks', 'teacher-attendance',
+  'finance', 'payment-integration', 'expenses', 'leave-management',
   'parent-app', 'student-app', 'teacher-app',
   'roles', 'permissions', 'website', 'events',
-  'academic-reports', 'attendance-reports', 'student-reports',
+  'academic-reports', 'attendance-reports', 'student-reports', 'finance-audit',
   'documents', 'export', 'onboarding',
   'hostel', 'transport', 'library', 'assets',
   'certificates', 'id-cards', 'admissions',
   'discounts', 'invoices', 'revenue-reports',
   'reports', 'timeline',
+  'delivery-reports', 'communication-health', 'communication-preferences',
 ];
 
 /**
@@ -175,11 +191,11 @@ export const ENTERPRISE_FEATURES = [
   'ai-learning-assistant', 'risk-assessment', 'ai-parent-reports', 'performance-tracking',
   'discipline', 'health', 'portfolios', 'alumni',
   'enterprise-finance', 'payroll', 'procurement', 'revenue-forecast',
-  'automatic-timetabling', 'visitors',
+  'salary-structure', 'automatic-timetabling', 'visitors',
   'mobile-offline',
   'business-intelligence', 'executive-dashboard',
   'audit-logs', 'backups', 'data-recovery', 'duplicate-detection',
-  'analytics',
+  'analytics', 'enterprise-suite', 'communication-usage', 'invalid-contacts',
 ];
 
 /**
