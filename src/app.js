@@ -142,6 +142,14 @@ import examRoutes from './routes/examRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import expenseRoutes from './routes/expenseRoutes.js';
+import departmentDesignationRoutes from './routes/departmentDesignationRoutes.js';
+import academicContentRoutes from './routes/academicContentRoutes.js';
+import accountingRoutes from './routes/accountingRoutes.js';
+import hrRoutes from './routes/hrRoutes.js';
+import transportExtRoutes from './routes/transportRoutes.js';
+import hostelManagementRoutes from './routes/hostelManagementRoutes.js';
+import inventoryRoutes from './routes/inventoryRoutes.js';
+import securityAdminRoutes from './routes/securityAdminRoutes.js';
 
 import { detectTenant, injectBranch, injectOwnership } from './middlewares/tenantMiddleware.js';
 import { asyncHandler } from './middlewares/asyncHandler.js';
@@ -369,6 +377,14 @@ app.use('/api/v1/exams', examRoutes);
 app.use('/api/v1/payroll', payrollRoutes);
 app.use('/api/v1/leaves', leaveRoutes);
 app.use('/api/v1/expenses', expenseRoutes);
+app.use('/api/v1/departments', departmentDesignationRoutes);
+app.use('/api/v1/academic-content', academicContentRoutes);
+app.use('/api/v1/accounting', accountingRoutes);
+app.use('/api/v1/hr', hrRoutes);
+app.use('/api/v1/transport', transportExtRoutes);
+app.use('/api/v1/hostel', hostelManagementRoutes);
+app.use('/api/v1/inventory', inventoryRoutes);
+app.use('/api/v1/security-admin', securityAdminRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/school-features', schoolFeatureRoutes);
@@ -376,6 +392,12 @@ app.use('/api/backups', backupRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/expenses', expenseRoutes);
+app.use('/api/departments', departmentDesignationRoutes);
+app.use('/api/academic-content', academicContentRoutes);
+app.use('/api/accounting', accountingRoutes);
+app.use('/api/hr', hrRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/security-admin', securityAdminRoutes);
 
 // Legacy routes for backward compatibility
 app.use('/api/mobile', mobileRoutes);

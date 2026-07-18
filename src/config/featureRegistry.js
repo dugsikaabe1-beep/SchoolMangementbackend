@@ -46,6 +46,11 @@ export const FEATURE_REGISTRY = [
   { code: 'promotions',     label: 'Student Promotion',     category: 'Academic' },
   { code: 'admissions',     label: 'Online Admission',      category: 'Academic' },
   { code: 'automatic-timetabling', label: 'Automatic Timetabling', category: 'Academic' },
+  { code: 'homework',       label: 'Homework / Assignments',  category: 'Academic' },
+  { code: 'lesson-plans',   label: 'Lesson Plans',            category: 'Academic' },
+  { code: 'curriculum',     label: 'Curriculum Management',   category: 'Academic' },
+  { code: 'departments',    label: 'Departments',             category: 'Academic' },
+  { code: 'designations',   label: 'Designations',            category: 'Academic' },
 
   // ── Logistics ─────────────────────────────────────────────────────────
   { code: 'hostel',         label: 'Hostel Management',     category: 'Logistics' },
@@ -53,6 +58,13 @@ export const FEATURE_REGISTRY = [
   { code: 'library',        label: 'Library Management',    category: 'Logistics' },
   { code: 'assets',         label: 'Asset Management',      category: 'Logistics' },
   { code: 'visitors',       label: 'Visitor Management',    category: 'Logistics' },
+  { code: 'transport-students', label: 'Student Transport Allocation', category: 'Logistics' },
+  { code: 'fuel-logs',      label: 'Vehicle Fuel Logs',      category: 'Logistics' },
+  { code: 'vehicle-maintenance', label: 'Vehicle Maintenance', category: 'Logistics' },
+  { code: 'hostel-attendance', label: 'Hostel Attendance',    category: 'Logistics' },
+  { code: 'bed-allocation', label: 'Bed Allocation',          category: 'Logistics' },
+  { code: 'suppliers',      label: 'Supplier Management',    category: 'Logistics' },
+  { code: 'inventory',      label: 'Inventory Management',   category: 'Logistics' },
 
   // ── Branch ────────────────────────────────────────────────────────────
   { code: 'branches',       label: 'Multi Branch Support',  category: 'Branch' },
@@ -70,6 +82,11 @@ export const FEATURE_REGISTRY = [
   { code: 'leave-management', label: 'Leave Management',    category: 'Finance' },
   { code: 'procurement',    label: 'Procurement',           category: 'Finance' },
   { code: 'revenue-forecast', label: 'Revenue Forecasting', category: 'Finance' },
+  { code: 'accounting',     label: 'Accounting System',       category: 'Finance' },
+  { code: 'employee-loans', label: 'Employee Loans',          category: 'Finance' },
+  { code: 'performance-reviews', label: 'Performance Reviews', category: 'Finance' },
+  { code: 'recruitment',    label: 'Recruitment',             category: 'Finance' },
+  { code: 'employee-contracts', label: 'Employee Contracts',  category: 'Finance' },
 
   // ── Communication ─────────────────────────────────────────────────────
   { code: 'announcements',     label: 'Announcements',         category: 'Communication' },
@@ -126,6 +143,10 @@ export const FEATURE_REGISTRY = [
   { code: 'data-recovery',  label: 'Data Recovery Center',  category: 'System' },
   { code: 'duplicate-detection', label: 'Duplicate Detection', category: 'System' },
   { code: 'enterprise-suite', label: 'Enterprise Suite',    category: 'System' },
+  { code: 'api-keys',       label: 'API Key Management',    category: 'System' },
+  { code: 'login-history',  label: 'Login History',         category: 'System' },
+  { code: 'ip-restrictions', label: 'IP Restrictions',      category: 'System' },
+  { code: 'password-policies', label: 'Password Policies',  category: 'System' },
 
   // ── AI & Analytics ────────────────────────────────────────────────────
   { code: 'ai-learning-assistant', label: 'AI Learning Assistant', category: 'AI & Analytics' },
@@ -195,6 +216,11 @@ export const PROFESSIONAL_FEATURES = [
   'discounts', 'invoices', 'revenue-reports',
   'reports', 'timeline',
   'delivery-reports', 'communication-health', 'communication-preferences',
+  'homework', 'lesson-plans', 'curriculum', 'departments', 'designations',
+  'transport-students', 'fuel-logs', 'vehicle-maintenance',
+  'hostel-attendance', 'bed-allocation',
+  'suppliers', 'inventory',
+  'employee-loans', 'performance-reviews', 'employee-contracts', 'recruitment',
 ];
 
 /**
@@ -212,6 +238,8 @@ export const ENTERPRISE_FEATURES = [
   'business-intelligence', 'executive-dashboard',
   'audit-logs', 'backups', 'data-recovery', 'duplicate-detection',
   'analytics', 'enterprise-suite', 'communication-usage', 'invalid-contacts',
+  'accounting', 'recruitment',
+  'api-keys', 'login-history', 'ip-restrictions', 'password-policies',
 ];
 
 /**
