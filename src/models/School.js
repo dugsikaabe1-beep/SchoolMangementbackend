@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { cloudinaryAssetSchema } from './schemas/cloudinaryAssetSchema.js';
+import { generateUniqueSubdomain } from '../utils/slugGenerator.js';
 
 const schoolSchema = new mongoose.Schema(
   {
@@ -198,6 +199,19 @@ const schoolSchema = new mongoose.Schema(
     toObject: { virtuals: true }
   }
 );
+
+// ── Pre-validate: auto-generate subdomain from name if not provided ──
+schoolSchema.pre('validate', async function (next) {
+  try {
+    if (!this.subdomain && this.name) {
+      const excludeId = this._id || null;
+      this.subdomain = await generateUniqueSubdomain(this.name, excludeId);
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Virtual: Check if subscription is expired
 schoolSchema.virtual('isSubscriptionExpired').get(function() {
