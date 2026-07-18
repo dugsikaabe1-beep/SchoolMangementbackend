@@ -201,15 +201,10 @@ const schoolSchema = new mongoose.Schema(
 );
 
 // ── Pre-validate: auto-generate subdomain from name if not provided ──
-schoolSchema.pre('validate', async function (next) {
-  try {
-    if (!this.subdomain && this.name) {
-      const excludeId = this._id || null;
-      this.subdomain = await generateUniqueSubdomain(this.name, excludeId);
-    }
-    next();
-  } catch (err) {
-    next(err);
+schoolSchema.pre('validate', async function () {
+  if (!this.subdomain && this.name) {
+    const excludeId = this._id || null;
+    this.subdomain = await generateUniqueSubdomain(this.name, excludeId);
   }
 });
 
