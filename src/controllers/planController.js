@@ -39,7 +39,7 @@ export const getPlanById = async (req, res) => {
  */
 export const createPlan = async (req, res) => {
   try {
-    const { name, code, monthlyPrice, yearlyPrice, currency, limits, features, isRecommended, status } = req.body;
+    const { name, description, code, monthlyPrice, yearlyPrice, currency, trialDays, limits, features, whiteLabel, customDomain, mobileApp, supportLevel, isRecommended, status } = req.body;
 
     if (!name || !code || monthlyPrice === undefined || yearlyPrice === undefined) {
       return res.status(400).json({
@@ -48,7 +48,23 @@ export const createPlan = async (req, res) => {
       });
     }
 
-    const plan = await Plan.create({ name, code, monthlyPrice, yearlyPrice, currency, limits, features, isRecommended, status });
+    const plan = await Plan.create({ 
+      name, 
+      description, 
+      code, 
+      monthlyPrice, 
+      yearlyPrice, 
+      currency, 
+      trialDays, 
+      limits, 
+      features, 
+      whiteLabel, 
+      customDomain, 
+      mobileApp, 
+      supportLevel, 
+      isRecommended, 
+      status 
+    });
 
     await logAction(req, {
       action: 'PLAN_CREATED',
@@ -147,6 +163,50 @@ export const archivePlan = async (req, res) => {
 };
 
 /**
+ * @desc    Clone a plan
+ * @route   POST /api/v1/super-admin/plans/:id/clone
+ * @access  Super Admin
+ */
+export const clonePlan = async (req, res) => {
+  try {
+    const existingPlan = await Plan.findById(req.params.id);
+    if (!existingPlan) return res.status(404).json({ success: false, message: 'Plan not found' });
+
+    const cloneName = `${existingPlan.name} (Copy)`;
+    const cloneCode = `${existingPlan.code}_COPY_${Date.now()}`;
+
+    const clonedPlan = await Plan.create({
+      name: cloneName,
+      description: existingPlan.description,
+      code: cloneCode,
+      monthlyPrice: existingPlan.monthlyPrice,
+      yearlyPrice: existingPlan.yearlyPrice,
+      currency: existingPlan.currency,
+      trialDays: existingPlan.trialDays,
+      limits: { ...existingPlan.limits },
+      features: [...existingPlan.features],
+      whiteLabel: existingPlan.whiteLabel,
+      customDomain: existingPlan.customDomain,
+      mobileApp: existingPlan.mobileApp,
+      supportLevel: existingPlan.supportLevel,
+      isRecommended: false,
+      status: 'inactive',
+    });
+
+    await logAction(req, {
+      action: 'PLAN_CLONED',
+      module: 'SaaS',
+      details: { originalPlanId: existingPlan._id, clonedPlanId: clonedPlan._id },
+      targetId: clonedPlan._id,
+    });
+
+    res.status(201).json({ success: true, message: 'Plan cloned successfully.', data: clonedPlan });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * @desc    Assign a plan to a school (upgrade/downgrade)
  * @route   POST /api/v1/super-admin/schools/:id/assign-plan
  * @access  Super Admin
@@ -183,12 +243,23 @@ export const assignPlanToSchool = async (req, res) => {
     school.subscription.limits = {
       students: plan.limits.students,
       teachers: plan.limits.teachers,
+      parents: plan.limits.parents,
+      employees: plan.limits.employees,
       branches: plan.limits.branches,
+      campuses: plan.limits.campuses,
       admins: plan.limits.admins,
       storage: plan.limits.storage,
       sms: plan.limits.sms,
       email: plan.limits.email,
+      api: plan.limits.api,
+      devices: plan.limits.devices,
     };
+    // Copy plan boolean options
+    school.subscription.whiteLabel = plan.whiteLabel;
+    school.subscription.customDomain = plan.customDomain;
+    school.subscription.mobileApp = plan.mobileApp;
+    school.subscription.supportLevel = plan.supportLevel;
+    school.subscription.trialDays = plan.trialDays;
 
     // Calculate end date if not provided
     if (endDate) {

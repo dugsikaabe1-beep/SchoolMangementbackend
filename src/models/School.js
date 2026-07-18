@@ -165,12 +165,22 @@ const schoolSchema = new mongoose.Schema(
       limits: {
         students: { type: Number, default: 100 },
         teachers: { type: Number, default: 10 },
+        parents: { type: Number, default: 1000 },
+        employees: { type: Number, default: 10 },
         branches: { type: Number, default: 1 },
+        campuses: { type: Number, default: 1 },
         admins: { type: Number, default: 1 },
         storage: { type: Number, default: 1024 }, // in MB
         sms: { type: Number, default: 100 },
         email: { type: Number, default: 1000 },
+        api: { type: Number, default: 10000 },
+        devices: { type: Number, default: 10 },
       },
+      whiteLabel: { type: Boolean, default: false },
+      customDomain: { type: Boolean, default: false },
+      mobileApp: { type: Boolean, default: true },
+      supportLevel: { type: String, enum: ['Basic', 'Standard', 'Premium', 'Enterprise', 'Custom'], default: 'Standard' },
+      trialDays: { type: Number, default: 0 },
       healthScore: {
         score: { type: Number, default: 100 }, // 0-100
         rating: { type: String, enum: ['Excellent', 'Good', 'Average', 'Needs Attention'], default: 'Excellent' },

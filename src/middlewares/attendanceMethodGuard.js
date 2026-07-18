@@ -6,9 +6,8 @@
  *   router.post('/rfid/verify', protect, attendanceMethodGuard('RFID'), verifyRFIDAttendance);
  *   router.post('/face/verify', protect, attendanceMethodGuard('FACE'), verifyFaceAttendance);
  */
-import { isFeatureEnabled } from '../../utils/featureAccess.js';
-import asyncHandler from '../asyncHandler.js';
-import ErrorResponse from '../../utils/errorResponse.js';
+import { isFeatureEnabled } from '../utils/featureAccess.js';
+import { asyncHandler } from './asyncHandler.js';
 
 const METHOD_FEATURE_MAP = {
   MANUAL:              'attendance',
@@ -37,10 +36,11 @@ const attendanceMethodGuard = (method) => {
 
     const enabled = await isFeatureEnabled(schoolId, featureCode);
     if (!enabled) {
-      throw new ErrorResponse(
-        `${method} attendance is not enabled for your subscription plan. Please upgrade your plan.`,
-        403
-      );
+      return res.status(403).json({
+        success: false,
+        message: `${method} attendance is not enabled for your subscription plan. Please upgrade your plan.`,
+        userMessage: `${method} attendance is not enabled for your subscription plan. Please upgrade your plan.`
+      });
     }
 
     next();

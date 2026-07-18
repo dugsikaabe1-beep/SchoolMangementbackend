@@ -42,6 +42,7 @@ import {
   createPlan,
   updatePlan,
   archivePlan,
+  clonePlan,
   assignPlanToSchool,
   getSaasAnalytics,
 } from '../controllers/planController.js';
@@ -119,6 +120,7 @@ router.post('/plans', asyncHandler(createPlan));
 router.get('/plans/:id', asyncHandler(getPlanById));
 router.put('/plans/:id', asyncHandler(updatePlan));
 router.delete('/plans/:id', asyncHandler(archivePlan));
+router.post('/plans/:id/clone', asyncHandler(clonePlan));
 
 // Feature Registry — returns all available features for the Plan UI matrix
 router.get('/feature-registry', (req, res) => {

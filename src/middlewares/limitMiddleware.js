@@ -12,13 +12,25 @@ export const getCurrentUsage = async (schoolId, resourceType) => {
       return await User.countDocuments({ role: 'student', school: schoolId, status: 'active', isDeleted: { $ne: true }, deletedAt: { $exists: false } });
     case 'teachers':
       return await User.countDocuments({ role: 'teacher', school: schoolId, status: 'active', isDeleted: { $ne: true }, deletedAt: { $exists: false } });
+    case 'parents':
+      return await User.countDocuments({ role: 'parent', school: schoolId, status: 'active', isDeleted: { $ne: true }, deletedAt: { $exists: false } });
+    case 'employees':
+      return await User.countDocuments({ role: { $in: ['employee', 'staff', 'accountant', 'librarian'] }, school: schoolId, status: 'active', isDeleted: { $ne: true }, deletedAt: { $exists: false } });
     case 'branches':
+      return await Branch.countDocuments({ tenant: schoolId, deletedAt: { $exists: false } });
+    case 'campuses':
       return await Branch.countDocuments({ tenant: schoolId, deletedAt: { $exists: false } });
     case 'admins':
       return await User.countDocuments({ role: { $in: ['schooladmin', 'school_admin'] }, school: schoolId, status: 'active', isDeleted: { $ne: true }, deletedAt: { $exists: false } });
     case 'storage':
       // Simplified: Estimating storage based on uploaded assets or documents would be here.
       // For now, return 0 as real-time tracking across Cloudinary is complex and expensive.
+      return 0;
+    case 'sms':
+    case 'email':
+    case 'api':
+    case 'devices':
+      // For these, usage tracking would be separate, return 0 for now
       return 0;
     default:
       return 0;
