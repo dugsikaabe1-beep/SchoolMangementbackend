@@ -15,7 +15,7 @@ const ALLOWED_UPLOAD_CATEGORIES = new Set([
 ]);
 
 const resolveUploadTenant = (req) => {
-  return req.schoolId || req.tenantId || req.school?.subdomain || req.user?.school?.subdomain || null;
+  return req.schoolId || req.tenantId || req.school?.subdomain || req.user?.school?.subdomain || (req.user?._id ? `pending-${req.user._id}` : null);
 };
 
 /**

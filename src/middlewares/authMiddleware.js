@@ -202,7 +202,8 @@ export const protect = async (req, res, next) => {
             req.originalUrl.includes('/profile-status') ||
             req.originalUrl.includes('/complete-school-profile') ||
             req.originalUrl.includes('/complete-profile') ||
-            req.originalUrl.includes('/public-content/upload'));
+            req.originalUrl.includes('/school-admin/upload') ||
+            req.originalUrl.includes('/upload'));
 
         const isAdmin = ['schooladmin', 'school_admin', 'admin'].includes(user.role);
 
