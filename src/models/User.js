@@ -205,7 +205,13 @@ const userSchema = new mongoose.Schema(
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {}
-    }
+    },
+
+    // Biometric & Attendance Verification Data (written by attendance controller)
+    verificationData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
   },
   { 
     timestamps: true,

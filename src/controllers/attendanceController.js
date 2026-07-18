@@ -7,6 +7,7 @@ import Subject from '../models/Subject.js';
 import AcademicYear from '../models/AcademicYear.js';
 import { logAction } from '../utils/auditLogger.js';
 import { sendNotification } from '../utils/notificationService.js';
+import { emitAttendanceEvent } from '../utils/socket.js';
 import { getRedisClient } from '../config/redis.js';
 import crypto from 'crypto';
 
@@ -92,6 +93,17 @@ async function markStaffAttendance({ employee, method, location, deviceInfo, ver
     existing.status         = finalStatus;
     if (location) existing.location = location;
     await existing.save();
+    // Real-time broadcast
+    emitAttendanceEvent(schoolId, 'attendance:check-out', {
+      employeeId: employee._id,
+      employeeName: employee.name,
+      method,
+      timestamp: checkOutTime,
+      workingHours,
+      overtimeHours,
+      status: finalStatus,
+      checkInTime: existing.checkInTime,
+    }).catch(() => {});
     return { record: existing, type: 'CHECK_OUT', employee };
   }
 
@@ -121,6 +133,17 @@ async function markStaffAttendance({ employee, method, location, deviceInfo, ver
     academicYear:     academicYearId,
     markedBy:         employee._id,
   });
+
+  // Real-time broadcast
+  emitAttendanceEvent(schoolId, 'attendance:check-in', {
+    employeeId: employee._id,
+    employeeName: employee.name,
+    method,
+    timestamp: checkInTime,
+    status,
+    lateMinutes,
+    deviceInfo,
+  }).catch(() => {});
 
   return { record, type: 'CHECK_IN', employee };
 }

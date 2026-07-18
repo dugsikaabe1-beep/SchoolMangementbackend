@@ -23,6 +23,16 @@ export const FEATURE_REGISTRY = [
   // ── Academic ──────────────────────────────────────────────────────────
   { code: 'attendance',     label: 'Attendance',            category: 'Academic' },
   { code: 'teacher-attendance', label: 'Staff Attendance',  category: 'Academic' },
+  { code: 'device-management', label: 'Attendance Devices',  category: 'Academic' },
+  // Per-method attendance features (Super Admin controls which methods each plan gets)
+  { code: 'attendance-qr',      label: 'QR Attendance',        category: 'Academic' },
+  { code: 'attendance-rfid',    label: 'RFID Attendance',      category: 'Academic' },
+  { code: 'attendance-nfc',     label: 'NFC Attendance',       category: 'Academic' },
+  { code: 'attendance-face',    label: 'Face Recognition',     category: 'Academic' },
+  { code: 'attendance-fingerprint', label: 'Fingerprint Attendance', category: 'Academic' },
+  { code: 'attendance-geofence', label: 'GPS Geofencing',      category: 'Academic' },
+  { code: 'attendance-rules',   label: 'Attendance Rules',     category: 'Academic' },
+  { code: 'attendance-overtime', label: 'Overtime Calculation', category: 'Academic' },
   { code: 'schedules',      label: 'Timetable / Schedule',  category: 'Academic' },
   { code: 'academic-calendar',label: 'Academic Calendar',   category: 'Academic' },
   { code: 'exams',          label: 'Exams',                 category: 'Academic' },
@@ -158,6 +168,8 @@ export const ALL_FEATURE_CODES = FEATURE_REGISTRY.map(f => f.code);
 export const STARTER_FEATURES = [
   'students', 'teachers', 'classes', 'subjects',
   'attendance', 'schedules', 'academic-years',
+  // Starter: QR + Manual only
+  'attendance-qr', 'attendance-rules',
   'announcements', 'settings', 'support', 'help-center',
   // Core communication features - always included
   'notifications', 'push-notifications', 'email-automation',
@@ -170,7 +182,9 @@ export const STARTER_FEATURES = [
 export const PROFESSIONAL_FEATURES = [
   ...STARTER_FEATURES,
   'parents', 'sections', 'exams', 'results', 'exam-halls', 'promotions',
-  'online-exams', 'question-banks', 'teacher-attendance',
+  'online-exams', 'question-banks', 'teacher-attendance', 'device-management',
+  // Professional: adds RFID + NFC + Geofencing + Overtime
+  'attendance-rfid', 'attendance-nfc', 'attendance-geofence', 'attendance-overtime',
   'finance', 'payment-integration', 'expenses', 'leave-management',
   'parent-app', 'student-app', 'teacher-app',
   'roles', 'permissions', 'website', 'events',
@@ -188,6 +202,8 @@ export const PROFESSIONAL_FEATURES = [
  */
 export const ENTERPRISE_FEATURES = [
   ...PROFESSIONAL_FEATURES,
+  // Enterprise: adds Face Recognition + Fingerprint
+  'attendance-face', 'attendance-fingerprint',
   'ai-learning-assistant', 'risk-assessment', 'ai-parent-reports', 'performance-tracking',
   'discipline', 'health', 'portfolios', 'alumni',
   'enterprise-finance', 'payroll', 'procurement', 'revenue-forecast',

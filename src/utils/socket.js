@@ -62,6 +62,14 @@ export const initSocket = (server) => {
       }
     });
 
+    // Join attendance live feed room (school admins / HR only)
+    socket.on('joinAttendance', (schoolId) => {
+      if (schoolId) {
+        socket.join(`attendance_${schoolId}`);
+        console.log(`[Socket] User joined attendance room: attendance_${schoolId}`);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log(`[Socket] Disconnected: ${socket.id}`);
     });
@@ -91,6 +99,23 @@ export const emitToUser = (userId, event, data) => {
  */
 export const emitToSchool = (schoolId, event, data) => {
   if (io) {
+    io.to(`school_${schoolId}`).emit(event, data);
+  }
+};
+
+/**
+ * Broadcast real-time attendance event to a school's attendance feed.
+ * @param {string} schoolId
+ * @param {string} event — 'attendance:check-in' | 'attendance:check-out' | 'attendance:enrollment' | 'attendance:device-status'
+ * @param {Object} data — { employeeName, method, timestamp, status, deviceName, ... }
+ */
+export const emitAttendanceEvent = (schoolId, event, data) => {
+  if (io) {
+    io.to(`attendance_${schoolId}`).emit(event, {
+      ...data,
+      _serverTimestamp: Date.now(),
+    });
+    // Also broadcast to school room so dashboards can update
     io.to(`school_${schoolId}`).emit(event, data);
   }
 };
